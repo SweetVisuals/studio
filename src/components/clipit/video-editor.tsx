@@ -6,12 +6,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
-import { Plus, Play, Sparkles, Loader2 } from 'lucide-react';
+import { Plus, Play, Sparkles, Loader2, Download } from 'lucide-react';
 import ClipList from './clip-list';
 import type { Clip } from '@/app/page';
 import { formatTime } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
-import { detectScenesAction } from '@/app/actions';
+import { generateCaptionsAction } from '@/app/actions';
 
 type VideoEditorProps = {
   videoUrl: string;
@@ -28,6 +28,7 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
   const [clips, setClips] = useState<Clip[]>([]);
   const [suggestedClips, setSuggestedClips] = useState<Omit<Clip, 'captions' | 'id'>[]>([]);
   const [isLoadingScenes, setIsLoadingScenes] = useState(false);
+  const [activeClipForPreview, setActiveClipForPreview] = useState<Clip | null>(null);
 
   const playIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const { toast } = useToast();
@@ -40,8 +41,13 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
       setDuration(video.duration);
       setEnd(Math.min(15, video.duration));
     };
-    const handleTimeUpdate = () => setCurrentTime(video.currentTime);
-
+    const handleTimeUpdate = () => {
+      setCurrentTime(video.currentTime);
+      if (activeClipForPreview && video.currentTime >= activeClipForPreview.end) {
+        video.pause();
+      }
+    };
+    
     video.addEventListener('loadedmetadata', handleLoadedMetadata);
     video.addEventListener('timeupdate', handleTimeUpdate);
 
@@ -52,7 +58,7 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
         clearInterval(playIntervalRef.current);
       }
     };
-  }, [videoRef]);
+  }, [videoRef, activeClipForPreview]);
 
   const handleSeek = (event: React.ChangeEvent<HTMLInputElement>) => {
     const time = parseFloat(event.target.value);
@@ -62,11 +68,21 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
     }
   };
 
-  const playClip = () => {
+  const playClip = (clip: { start: number; end: number, captions?: string }) => {
     const video = videoRef.current;
     if (!video) return;
 
-    video.currentTime = start;
+    // A bit of a hack to tie preview to a clip for captions
+    const tempClip: Clip = {
+        id: -1, 
+        start: clip.start, 
+        end: clip.end, 
+        title: 'Preview',
+        captions: clip.captions || ''
+    };
+    setActiveClipForPreview(tempClip);
+
+    video.currentTime = clip.start;
     video.play();
 
     if (playIntervalRef.current) {
@@ -74,19 +90,18 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
     }
 
     playIntervalRef.current = setInterval(() => {
-      if (video.currentTime >= end) {
+      if (video.currentTime >= clip.end) {
         video.pause();
         if (playIntervalRef.current) clearInterval(playIntervalRef.current);
+        setActiveClipForPreview(null);
       }
     }, 100);
   };
-
+  
   const detectScenes = async () => {
     setIsLoadingScenes(true);
     toast({ title: 'AI Processing', description: 'Detecting potential clips in your video...' });
     
-    const dummyVideoDataUri = 'data:video/mp4;base64,';
-
     try {
         const videoDuration = videoRef.current?.duration || 0;
         if (videoDuration === 0) {
@@ -98,7 +113,6 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
             return;
         }
 
-        // Simulate getting timestamps from AI
         await new Promise(resolve => setTimeout(resolve, 1500));
         
         const newSuggestions: Omit<Clip, 'captions'|'id'>[] = [];
@@ -131,7 +145,7 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
     }
   };
 
-  const addClip = () => {
+  const addClip = async () => {
     if (end <= start) {
         toast({
             variant: 'destructive',
@@ -140,15 +154,36 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
         });
         return;
     }
+    const id = Date.now();
     const newClip: Clip = {
-      id: Date.now(),
+      id,
       start,
       end,
       title: `My Clip ${clips.length + 1}`,
-      captions: '',
+      captions: '', // Initially empty
     };
     setClips((prev) => [newClip, ...prev]);
-    toast({ title: 'Clip Added', description: `"${newClip.title}" was added to your clips.` });
+    toast({ title: 'Clip Added', description: `"${newClip.title}" was added. Generating captions...` });
+
+    // Auto-generate captions
+    try {
+        const dummyAudioDataUri = 'data:audio/wav;base64,'; // Placeholder
+        const result = await generateCaptionsAction({ audioDataUri: dummyAudioDataUri });
+        setClips((prev) =>
+          prev.map((c) => (c.id === id ? { ...c, captions: result.captions } : c))
+        );
+        toast({
+            title: 'Captions Ready!',
+            description: `AI captions for "${newClip.title}" are complete.`,
+        });
+    } catch (error) {
+        console.error('Auto-caption failed for', newClip.title, error);
+        toast({
+            variant: 'destructive',
+            title: 'Caption Failed',
+            description: 'Could not generate AI captions for the clip.',
+        });
+    }
   };
 
   const handleSelectClip = (clip: { start: number; end: number }) => {
@@ -158,57 +193,63 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
       videoRef.current.currentTime = clip.start;
       videoRef.current.pause();
     }
+    setActiveClipForPreview(null);
   };
-
+  
   return (
     <div className="space-y-8">
       <Card>
         <CardContent className="p-2 md:p-4">
-          <div className="aspect-video w-full overflow-hidden rounded-lg bg-black">
-            <video ref={videoRef} src={videoUrl} className="h-full w-full" controls />
-          </div>
-          <div className="mt-4 space-y-4 p-2">
-            <div className="space-y-2">
-              <input
-                type="range"
-                min="0"
-                max={duration}
-                step="0.01"
-                value={currentTime}
-                onChange={handleSeek}
-                className="w-full h-2 bg-muted-foreground/30 rounded-lg appearance-none cursor-pointer accent-primary"
-              />
-              <div className="flex justify-between text-sm text-muted-foreground font-mono">
-                <span>{formatTime(currentTime, true)}</span>
-                <span>{formatTime(duration, true)}</span>
-              </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="md:col-span-2 space-y-4">
+               <div className="aspect-video w-full overflow-hidden rounded-lg bg-black relative">
+                  <video ref={videoRef} src={videoUrl} className="h-full w-full" controls crossOrigin="anonymous"/>
+                   {activeClipForPreview && activeClipForPreview.captions && (
+                     <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-full px-4 text-center">
+                       <p className="py-2 px-4 text-lg md:text-xl font-bold text-white bg-black/60 rounded-md inline">
+                         {activeClipForPreview.captions}
+                       </p>
+                     </div>
+                   )}
+               </div>
+               <div className="space-y-2">
+                 <input
+                   type="range"
+                   min="0"
+                   max={duration}
+                   step="0.01"
+                   value={currentTime}
+                   onChange={handleSeek}
+                   className="w-full h-2 bg-muted-foreground/30 rounded-lg appearance-none cursor-pointer accent-primary"
+                 />
+                 <div className="flex justify-between text-sm text-muted-foreground font-mono">
+                   <span>{formatTime(currentTime, true)}</span>
+                   <span>{formatTime(duration, true)}</span>
+                 </div>
+               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4 items-end">
-              <div className="space-y-1">
-                <Label htmlFor="start-time">Start Time (s)</Label>
-                <Input id="start-time" type="number" value={start.toFixed(2)} onChange={(e) => setStart(parseFloat(e.target.value) || 0)} step="0.1" min="0" max={duration} />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="end-time">End Time (s)</Label>
-                <Input id="end-time" type="number" value={end.toFixed(2)} onChange={(e) => setEnd(parseFloat(e.target.value) || 0)} step="0.1" min={start} max={duration}/>
-              </div>
-              <div className="flex h-10 items-center gap-2">
-                <Button onClick={playClip} className="w-full bg-accent hover:bg-accent/90">
-                  <Play /> Preview Clip
+            <div className="md:col-span-1 space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                        <Label htmlFor="start-time">Start (s)</Label>
+                        <Input id="start-time" type="number" value={start.toFixed(2)} onChange={(e) => setStart(parseFloat(e.target.value) || 0)} step="0.1" min="0" max={duration} />
+                    </div>
+                    <div className="space-y-1">
+                        <Label htmlFor="end-time">End (s)</Label>
+                        <Input id="end-time" type="number" value={end.toFixed(2)} onChange={(e) => setEnd(parseFloat(e.target.value) || 0)} step="0.1" min={start} max={duration}/>
+                    </div>
+                </div>
+                 <Button onClick={() => playClip({ start, end })} className="w-full bg-accent hover:bg-accent/90">
+                   <Play /> Preview Clip
+                 </Button>
+                 <Button onClick={addClip} className="w-full">
+                   <Plus /> Add Clip
+                 </Button>
+                <Button onClick={detectScenes} disabled={isLoadingScenes} className="w-full">
+                    {isLoadingScenes ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Sparkles className="mr-2 h-4 w-4" />}
+                    {isLoadingScenes ? 'Working...' : 'AI Scene Detection'}
                 </Button>
-              </div>
-              <div className="flex h-10 items-center gap-2">
-                <Button onClick={addClip} className="w-full">
-                  <Plus /> Add Clip
-                </Button>
-              </div>
-            </div>
-            <div className="pt-4">
-              <Button onClick={detectScenes} disabled={isLoadingScenes} className="w-full md:w-auto">
-                {isLoadingScenes ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Sparkles className="mr-2 h-4 w-4" />}
-                {isLoadingScenes ? 'Detecting Scenes...' : 'AI Scene Detection'}
-              </Button>
             </div>
           </div>
         </CardContent>
@@ -236,7 +277,9 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
         </div>
       )}
 
-      <ClipList clips={clips} setClips={setClips} onPreview={handleSelectClip} />
+      <ClipList clips={clips} setClips={setClips} onPreview={playClip} videoUrl={videoUrl} videoElement={videoRef.current} />
     </div>
   );
 }
+
+    

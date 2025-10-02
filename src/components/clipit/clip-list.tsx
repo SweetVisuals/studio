@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -20,7 +20,6 @@ import {
 import { Progress } from '@/components/ui/progress';
 import { Captions, Download, Play, Trash2, Loader2 } from 'lucide-react';
 import type { Clip } from '@/app/page';
-import { generateCaptionsAction } from '@/app/actions';
 import { useToast } from '@/hooks/use-toast';
 import { formatTime } from '@/lib/utils';
 import { Input } from '../ui/input';
@@ -28,41 +27,19 @@ import { Input } from '../ui/input';
 type ClipListProps = {
   clips: Clip[];
   setClips: React.Dispatch<React.SetStateAction<Clip[]>>;
-  onPreview: (clip: { start: number; end: number }) => void;
+  onPreview: (clip: Clip) => void;
+  videoUrl: string;
+  videoElement: HTMLVideoElement | null;
 };
 
-export default function ClipList({ clips, setClips, onPreview }: ClipListProps) {
+export default function ClipList({ clips, setClips, onPreview, videoElement }: ClipListProps) {
   const [selectedClip, setSelectedClip] = useState<Clip | null>(null);
   const [isCaptionDialogOpen, setIsCaptionDialogOpen] = useState(false);
-  const [isGeneratingCaptions, setIsGeneratingCaptions] = useState(false);
   const [editableCaptions, setEditableCaptions] = useState('');
   const [exportingClipId, setExportingClipId] = useState<number | null>(null);
   const [exportProgress, setExportProgress] = useState(0);
 
   const { toast } = useToast();
-
-  useEffect(() => {
-    const clipsWithoutCaptions = clips.filter(c => c.captions === '');
-    if (clipsWithoutCaptions.length > 0) {
-      const autoGenerateCaptions = async (clip: Clip) => {
-        try {
-          const result = await generateCaptionsAction({ start: clip.start, end: clip.end });
-          setClips((prev) =>
-            prev.map((c) => (c.id === clip.id ? { ...c, captions: result.captions } : c))
-          );
-          toast({
-            title: 'Captions Generated',
-            description: `AI captions ready for "${clip.title}".`,
-          });
-        } catch (error) {
-          // Silently fail for now or show a small indicator on the clip card
-          console.error('Auto-caption failed for', clip.title, error);
-        }
-      };
-
-      clipsWithoutCaptions.forEach(autoGenerateCaptions);
-    }
-  }, [clips, setClips, toast]);
 
   const openCaptionEditor = (clip: Clip) => {
     setSelectedClip(clip);
@@ -88,24 +65,88 @@ export default function ClipList({ clips, setClips, onPreview }: ClipListProps) 
     toast({ title: 'Clip removed.'});
   };
 
-  const exportClip = (id: number) => {
-    setExportingClipId(id);
-    setExportProgress(0);
+  const exportClip = async (clip: Clip) => {
+    if (!videoElement) {
+      toast({ variant: 'destructive', title: 'Video element not found.' });
+      return;
+    }
 
-    const interval = setInterval(() => {
-      setExportProgress((prev) => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          setExportingClipId(null);
-          toast({
-            title: 'Clip exported successfully!',
-            description: 'Your download would start now.',
-          });
-          return 100;
+    setExportingClipId(clip.id);
+    setExportProgress(0);
+    toast({ title: 'Exporting clip...', description: 'Please wait, this can take a moment.' });
+
+    try {
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Could not get canvas context');
+
+      canvas.width = videoElement.videoWidth;
+      canvas.height = videoElement.videoHeight;
+
+      const stream = canvas.captureStream(30);
+      const recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+      const chunks: Blob[] = [];
+
+      recorder.ondataavailable = (e) => chunks.push(e.data);
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${clip.title.replace(/ /g, '_')}.webm`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        setExportingClipId(null);
+        toast({ title: 'Export complete!', description: 'Your video has been downloaded.' });
+      };
+
+      recorder.start();
+
+      videoElement.currentTime = clip.start;
+      // Mute the video to prevent recording audio from the original track
+      videoElement.muted = true;
+      await videoElement.play();
+
+      const totalFrames = (clip.end - clip.start) * 30;
+      let frameCount = 0;
+
+      const drawFrame = () => {
+        if (videoElement.currentTime >= clip.end || videoElement.paused) {
+          videoElement.pause();
+          recorder.stop();
+          // Unmute for normal playback
+          videoElement.muted = false;
+          return;
         }
-        return prev + 10;
-      });
-    }, 200);
+
+        context.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+        
+        // Draw captions
+        if (clip.captions) {
+            const fontSize = Math.max(24, canvas.width / 30);
+            context.font = `bold ${fontSize}px Poppins, sans-serif`;
+            context.fillStyle = 'white';
+            context.textAlign = 'center';
+            context.shadowColor = 'black';
+            context.shadowBlur = 10;
+            context.fillText(clip.captions, canvas.width / 2, canvas.height - (fontSize * 1.5));
+        }
+
+        frameCount++;
+        setExportProgress((frameCount / totalFrames) * 100);
+        requestAnimationFrame(drawFrame);
+      };
+
+      drawFrame();
+    } catch (error) {
+      console.error('Export failed:', error);
+      toast({ variant: 'destructive', title: 'Export failed', description: (error as Error).message });
+      videoElement.muted = false; // Ensure video is unmuted on error
+      setExportingClipId(null);
+    }
   };
 
   if (clips.length === 0) {
@@ -154,7 +195,8 @@ export default function ClipList({ clips, setClips, onPreview }: ClipListProps) 
                   </Button>
                   <Button
                     size="sm"
-                    onClick={() => exportClip(clip.id)}
+                    onClick={() => exportClip(clip)}
+                    disabled={exportingClipId !== null}
                   >
                     <Download className="h-4 w-4 mr-2" />
                     Export
@@ -183,26 +225,19 @@ export default function ClipList({ clips, setClips, onPreview }: ClipListProps) 
             </DialogDescription>
           </DialogHeader>
           <div className="py-4">
-            {isGeneratingCaptions ? (
-              <div className="flex flex-col items-center justify-center h-48 rounded-md bg-muted/50">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                <p className="mt-4 text-muted-foreground">Generating smart captions...</p>
-              </div>
-            ) : (
-              <Textarea
-                value={editableCaptions}
-                onChange={(e) => setEditableCaptions(e.target.value)}
-                rows={10}
-                className="w-full text-base"
-                placeholder="Captions will appear here..."
-              />
-            )}
+            <Textarea
+              value={editableCaptions}
+              onChange={(e) => setEditableCaptions(e.target.value)}
+              rows={10}
+              className="w-full text-base"
+              placeholder="Captions will appear here..."
+            />
           </div>
           <DialogFooter>
             <DialogClose asChild>
               <Button variant="outline">Cancel</Button>
             </DialogClose>
-            <Button onClick={saveCaptions} disabled={isGeneratingCaptions}>
+            <Button onClick={saveCaptions}>
               Save Captions
             </Button>
           </DialogFooter>
@@ -211,3 +246,5 @@ export default function ClipList({ clips, setClips, onPreview }: ClipListProps) 
     </div>
   );
 }
+
+    
