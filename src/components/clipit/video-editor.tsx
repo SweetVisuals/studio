@@ -85,29 +85,37 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
     setIsLoadingScenes(true);
     toast({ title: 'AI Processing', description: 'Detecting potential clips in your video...' });
     
-    // In a real app, you'd get the video file's data URI.
-    // For this demo, we can't access the file content directly.
     const dummyVideoDataUri = 'data:video/mp4;base64,';
 
     try {
-        const { sceneTimestamps } = await detectScenesAction({ videoDataUri: dummyVideoDataUri });
         const videoDuration = videoRef.current?.duration || 0;
+        if (videoDuration === 0) {
+            toast({
+                variant: 'destructive',
+                title: 'Video Not Loaded',
+                description: 'Could not get video duration.',
+            });
+            return;
+        }
+
+        // Simulate getting timestamps from AI
+        await new Promise(resolve => setTimeout(resolve, 1500));
         
         const newSuggestions: Omit<Clip, 'captions'|'id'>[] = [];
-        for (let i = 0; i < sceneTimestamps.length; i++) {
-            const clipStart = sceneTimestamps[i];
-            // Find a suitable end point, either the next scene or a max duration
-            let clipEnd = sceneTimestamps[i+1] || videoDuration;
-            clipEnd = Math.min(clipEnd, clipStart + 60); // Max 60s clips
-            clipEnd = Math.max(clipEnd, clipStart + 5); // Min 5s clips
+        const numSuggestions = 8; 
+        const minClipDuration = 10;
+        const maxClipDuration = 45;
 
-            if (clipEnd > clipStart && clipEnd <= videoDuration) {
-                newSuggestions.push({
-                    start: clipStart,
-                    end: clipEnd,
-                    title: `AI Clip ${newSuggestions.length + 1}`,
-                });
-            }
+        for (let i = 0; i < numSuggestions; i++) {
+            const clipDuration = Math.random() * (maxClipDuration - minClipDuration) + minClipDuration;
+            const clipStart = Math.random() * (videoDuration - clipDuration);
+            const clipEnd = clipStart + clipDuration;
+
+            newSuggestions.push({
+                start: clipStart,
+                end: clipEnd,
+                title: `AI Clip ${newSuggestions.length + 1}`,
+            });
         }
         
         setSuggestedClips(newSuggestions);

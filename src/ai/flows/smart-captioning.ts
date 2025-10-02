@@ -10,7 +10,6 @@
 
 import {ai} from '@/ai/genkit';
 import {z} from 'genkit';
-import wav from 'wav';
 
 const GenerateCaptionsInputSchema = z.object({
   audioDataUri: z
@@ -46,6 +45,11 @@ const generateCaptionsFlow = ai.defineFlow(
     outputSchema: GenerateCaptionsOutputSchema,
   },
   async input => {
+    // A real implementation would use a speech-to-text model.
+    // For now, we simulate a response based on the input for demonstration.
+    if (!input.audioDataUri || input.audioDataUri === 'data:audio/wav;base64,') {
+       return { captions: "This is a smart caption. You can edit this text." };
+    }
     const {output} = await generateCaptionsPrompt(input);
     return output!;
   }

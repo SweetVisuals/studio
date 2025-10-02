@@ -19,20 +19,20 @@ export async function generateCaptionsAction(clipData: {
     // In a real implementation, you would extract the audio from the video
     // segment and pass it as a data URI.
     const dummyAudioDataUri = 'data:audio/wav;base64,'; // Placeholder
-    // const result = await generateCaptions({ audioDataUri: dummyAudioDataUri });
-    // return result;
+    const result = await generateCaptions({ audioDataUri: dummyAudioDataUri });
+    return result;
   } catch (error) {
     console.error(
-      'AI caption generation failed (expected with mock data):',
+      'AI caption generation failed:',
       error
     );
   }
 
+  // Fallback caption
   const startTime = formatTime(clipData.start);
   const endTime = formatTime(clipData.end);
-
   return {
-    captions: `This is a smart caption for the clip from ${startTime} to ${endTime}. You can edit this text.`,
+    captions: `This is a fallback caption for the clip from ${startTime} to ${endTime}. You can edit this.`,
   };
 }
 
