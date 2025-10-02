@@ -3,38 +3,52 @@
 
 import { generateCaptions } from '@/ai/flows/smart-captioning';
 import { formatTime } from '@/lib/utils';
+import { detectSceneChanges } from '@/ai/ai-scene-detection';
 
-// This is a mock function to simulate AI caption generation.
-// In a real application, you would extract audio from the video clip
-// and pass it as a data URI to the `generateCaptions` flow.
 export async function generateCaptionsAction(clipData: {
   start: number;
   end: number;
+  // In a real app, we'd pass audio data. For now, we mock it.
+  // audioDataUri: string; 
 }): Promise<{ captions: string }> {
   // Simulate network delay and AI processing time
-  await new Promise((resolve) => setTimeout(resolve, 2000));
+  await new Promise((resolve) => setTimeout(resolve, 1500));
 
-  // Since we cannot process video/audio here, we'll use a mock call.
-  // The AI flow is designed to take audio data, but we'll send a dummy string.
-  // This demonstrates the wiring without needing client-side FFMPEG.
   try {
-    // This call will likely fail without real audio data, so we wrap it.
-    // In a real implementation, `dummyAudioDataUri` would be the real data.
+    // This call is mocked for now as we don't have audio extraction.
+    // In a real implementation, you would extract the audio from the video
+    // segment and pass it as a data URI.
     const dummyAudioDataUri = 'data:audio/wav;base64,'; // Placeholder
     // const result = await generateCaptions({ audioDataUri: dummyAudioDataUri });
     // return result;
   } catch (error) {
     console.error(
-      'AI caption generation failed (as expected with mock data):',
+      'AI caption generation failed (expected with mock data):',
       error
     );
   }
 
-  // Return a mock caption
   const startTime = formatTime(clipData.start);
   const endTime = formatTime(clipData.end);
 
   return {
-    captions: `This is a smart caption for the clip from ${startTime} to ${endTime}. You can edit this text to make sure it's perfect for your video.`,
+    captions: `This is a smart caption for the clip from ${startTime} to ${endTime}. You can edit this text.`,
   };
+}
+
+
+export async function detectScenesAction(videoData: {
+  videoDataUri: string;
+}): Promise<{ sceneTimestamps: number[] }> {
+    // Simulate AI processing for now, as we don't have a video processing backend.
+    // In a real app, you would pass the videoData.videoDataUri to the Genkit flow.
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    // const result = await detectSceneChanges({ videoDataUri: videoData.videoDataUri });
+    // return result;
+
+    // Mock response
+    return {
+        sceneTimestamps: [0, 15, 30, 45, 60, 75, 90]
+    };
 }

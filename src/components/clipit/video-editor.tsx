@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useRef, useEffect, type RefObject } from 'react';
@@ -5,11 +6,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
-import { Plus, Play, Sparkles } from 'lucide-react';
+import { Plus, Play, Sparkles, Loader2 } from 'lucide-react';
 import ClipList from './clip-list';
 import type { Clip } from '@/app/page';
 import { formatTime } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
+import { detectScenesAction } from '@/app/actions';
 
 type VideoEditorProps = {
   videoUrl: string;
@@ -24,7 +26,7 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
   const [end, setEnd] = useState(15);
 
   const [clips, setClips] = useState<Clip[]>([]);
-  const [suggestedClips, setSuggestedClips] = useState<Omit<Clip, 'captions'>[]>([]);
+  const [suggestedClips, setSuggestedClips] = useState<Omit<Clip, 'captions' | 'id'>[]>([]);
   const [isLoadingScenes, setIsLoadingScenes] = useState(false);
 
   const playIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -36,7 +38,7 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
 
     const handleLoadedMetadata = () => {
       setDuration(video.duration);
-      setEnd(Math.min(15, video.duration)); // Default to 15s or video length
+      setEnd(Math.min(15, video.duration));
     };
     const handleTimeUpdate = () => setCurrentTime(video.currentTime);
 
@@ -82,20 +84,43 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
   const detectScenes = async () => {
     setIsLoadingScenes(true);
     toast({ title: 'AI Processing', description: 'Detecting potential clips in your video...' });
-    await new Promise((res) => setTimeout(res, 2000)); // Simulate AI processing
-    const videoDuration = videoRef.current?.duration || 60;
-    const clipLength = 15;
-    const numClips = Math.max(1, Math.floor(videoDuration / clipLength));
     
-    const newSuggestions: Omit<Clip, 'captions'>[] = Array.from({ length: numClips }, (_, i) => ({
-      id: Date.now() + i,
-      start: i * clipLength,
-      end: Math.min((i + 1) * clipLength, videoDuration),
-      title: `Suggested Clip ${i + 1}`,
-    }));
-    setSuggestedClips(newSuggestions);
-    setIsLoadingScenes(false);
-    toast({ title: 'AI Complete', description: `${newSuggestions.length} clips suggested.` });
+    // In a real app, you'd get the video file's data URI.
+    // For this demo, we can't access the file content directly.
+    const dummyVideoDataUri = 'data:video/mp4;base64,';
+
+    try {
+        const { sceneTimestamps } = await detectScenesAction({ videoDataUri: dummyVideoDataUri });
+        const videoDuration = videoRef.current?.duration || 0;
+        
+        const newSuggestions: Omit<Clip, 'captions'|'id'>[] = [];
+        for (let i = 0; i < sceneTimestamps.length; i++) {
+            const clipStart = sceneTimestamps[i];
+            // Find a suitable end point, either the next scene or a max duration
+            let clipEnd = sceneTimestamps[i+1] || videoDuration;
+            clipEnd = Math.min(clipEnd, clipStart + 60); // Max 60s clips
+            clipEnd = Math.max(clipEnd, clipStart + 5); // Min 5s clips
+
+            if (clipEnd > clipStart && clipEnd <= videoDuration) {
+                newSuggestions.push({
+                    start: clipStart,
+                    end: clipEnd,
+                    title: `AI Clip ${newSuggestions.length + 1}`,
+                });
+            }
+        }
+        
+        setSuggestedClips(newSuggestions);
+        toast({ title: 'AI Complete', description: `${newSuggestions.length} clips suggested.` });
+    } catch (error) {
+        toast({
+            variant: 'destructive',
+            title: 'Scene Detection Failed',
+            description: 'Could not detect scenes. Please try again.',
+        });
+    } finally {
+        setIsLoadingScenes(false);
+    }
   };
 
   const addClip = () => {
@@ -173,7 +198,7 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
             </div>
             <div className="pt-4">
               <Button onClick={detectScenes} disabled={isLoadingScenes} className="w-full md:w-auto">
-                <Sparkles className="mr-2 h-4 w-4" />
+                {isLoadingScenes ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Sparkles className="mr-2 h-4 w-4" />}
                 {isLoadingScenes ? 'Detecting Scenes...' : 'AI Scene Detection'}
               </Button>
             </div>
@@ -184,16 +209,16 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
       {suggestedClips.length > 0 && (
         <div>
           <h2 className="font-headline text-2xl font-bold mb-4">AI Suggested Clips</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {suggestedClips.map((clip) => (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+            {suggestedClips.map((clip, index) => (
               <Card
-                key={clip.id}
-                className="cursor-pointer hover:shadow-lg transition-shadow duration-200 hover:border-primary"
+                key={index}
+                className="cursor-pointer hover:shadow-lg transition-all duration-300 hover:ring-2 hover:ring-primary group"
                 onClick={() => handleSelectClip(clip)}
               >
-                <CardContent className="p-4">
-                  <p className="font-semibold font-headline">{clip.title}</p>
-                  <p className="text-sm text-muted-foreground font-mono">
+                <CardContent className="p-3">
+                  <p className="font-semibold font-headline text-sm truncate group-hover:text-primary">{clip.title}</p>
+                  <p className="text-xs text-muted-foreground font-mono mt-1">
                     {formatTime(clip.start)} - {formatTime(clip.end)}
                   </p>
                 </CardContent>

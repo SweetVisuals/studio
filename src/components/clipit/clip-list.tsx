@@ -1,6 +1,7 @@
+
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -17,7 +18,7 @@ import {
   DialogClose,
 } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
-import { Captions, Download, Play, Trash2, Loader2, Edit } from 'lucide-react';
+import { Captions, Download, Play, Trash2, Loader2 } from 'lucide-react';
 import type { Clip } from '@/app/page';
 import { generateCaptionsAction } from '@/app/actions';
 import { useToast } from '@/hooks/use-toast';
@@ -40,28 +41,33 @@ export default function ClipList({ clips, setClips, onPreview }: ClipListProps) 
 
   const { toast } = useToast();
 
-  const openCaptionEditor = async (clip: Clip) => {
+  useEffect(() => {
+    const clipsWithoutCaptions = clips.filter(c => c.captions === '');
+    if (clipsWithoutCaptions.length > 0) {
+      const autoGenerateCaptions = async (clip: Clip) => {
+        try {
+          const result = await generateCaptionsAction({ start: clip.start, end: clip.end });
+          setClips((prev) =>
+            prev.map((c) => (c.id === clip.id ? { ...c, captions: result.captions } : c))
+          );
+          toast({
+            title: 'Captions Generated',
+            description: `AI captions ready for "${clip.title}".`,
+          });
+        } catch (error) {
+          // Silently fail for now or show a small indicator on the clip card
+          console.error('Auto-caption failed for', clip.title, error);
+        }
+      };
+
+      clipsWithoutCaptions.forEach(autoGenerateCaptions);
+    }
+  }, [clips, setClips, toast]);
+
+  const openCaptionEditor = (clip: Clip) => {
     setSelectedClip(clip);
     setEditableCaptions(clip.captions);
     setIsCaptionDialogOpen(true);
-    if (!clip.captions) {
-      setIsGeneratingCaptions(true);
-      try {
-        const result = await generateCaptionsAction({ start: clip.start, end: clip.end });
-        setEditableCaptions(result.captions);
-        setClips((prev) =>
-          prev.map((c) => (c.id === clip.id ? { ...c, captions: result.captions } : c))
-        );
-      } catch (error) {
-        toast({
-          variant: 'destructive',
-          title: 'Caption Generation Failed',
-          description: 'Could not generate captions. Please try again.',
-        });
-      } finally {
-        setIsGeneratingCaptions(false);
-      }
-    }
   };
 
   const saveCaptions = () => {
@@ -143,7 +149,8 @@ export default function ClipList({ clips, setClips, onPreview }: ClipListProps) 
                   </Button>
                   <Button variant="outline" size="sm" onClick={() => openCaptionEditor(clip)}>
                     <Captions className="h-4 w-4 mr-2" />
-                    Captions
+                    {clip.captions ? 'Edit Captions' : 'Captions'}
+                    {clip.captions === '' && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}
                   </Button>
                   <Button
                     size="sm"
