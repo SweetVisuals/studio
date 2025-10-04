@@ -104,6 +104,10 @@
     mix-blend-mode: overlay;
     animation: vhs-glitch 0.15s linear infinite;
   }
+
+  .night-vision-filter {
+      filter: grayscale(100%) brightness(1.2) sepia(100%) hue-rotate(80deg) saturate(200%);
+  }
 }
 
 @keyframes vhs-scanlines {

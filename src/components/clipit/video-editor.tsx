@@ -19,11 +19,18 @@ import { formatTime } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { generateCaptionsAction, detectScenesAction } from '@/app/actions';
 import { cn } from '@/lib/utils';
+import { Checkbox } from '../ui/checkbox';
 
 type VideoEditorProps = {
   videoUrl: string;
   videoRef: RefObject<HTMLVideoElement>;
 };
+
+const filterOptions: { id: VideoFilter, label: string }[] = [
+    { id: 'bw', label: 'Black & White' },
+    { id: 'night-vision', label: 'Night Vision' },
+    { id: 'vhs', label: 'VHS' },
+];
 
 export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
   const [currentTime, setCurrentTime] = useState(0);
@@ -35,7 +42,7 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
   const [isLoadingScenes, setIsLoadingScenes] = useState(false);
   const [activeClipForPreview, setActiveClipForPreview] = useState<Clip | null>(null);
 
-  const [filter, setFilter] = useState<VideoFilter>('none');
+  const [filters, setFilters] = useState<VideoFilter[]>(['none']);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('9:16');
   const [overlayAudioFile, setOverlayAudioFile] = useState<File | null>(null);
   const [overlayAudioUrl, setOverlayAudioUrl] = useState<string | null>(null);
@@ -121,7 +128,7 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
         end: end, 
         title: 'Preview',
         captions: 'Sample Captions',
-        filter: filter,
+        filters: filters,
         aspectRatio: aspectRatio,
         isMuted: isMuted,
         overlayAudioUrl: overlayAudioUrl || undefined,
@@ -145,7 +152,7 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
         const numSuggestions = 8; 
         const minClipDuration = 10;
         const maxClipDuration = 45;
-        const filters: VideoFilter[] = ['none', 'bw', 'vhs', 'night-vision'];
+        const allFilters: VideoFilter[] = ['none', 'bw', 'vhs', 'night-vision'];
         const aspectRatios: AspectRatio[] = ['9:16', '1:1', '16:9'];
 
         for (let i = 0; i < numSuggestions; i++) {
@@ -157,7 +164,7 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
                 start: clipStart,
                 end: clipEnd,
                 title: `AI Clip ${i + 1}`,
-                filter: filters[Math.floor(Math.random() * filters.length)],
+                filters: [allFilters[Math.floor(Math.random() * allFilters.length)]],
                 aspectRatio: aspectRatios[Math.floor(Math.random() * aspectRatios.length)],
                 isMuted: Math.random() > 0.7,
             });
@@ -189,7 +196,7 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
       end,
       title: `My Clip ${clips.length + 1}`,
       captions: '',
-      filter,
+      filters,
       aspectRatio,
       isMuted,
       overlayAudioUrl: overlayAudioUrl || undefined,
@@ -201,6 +208,9 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
     setOverlayAudioFile(null);
     setOverlayAudioUrl(null);
     if(audioInputRef.current) audioInputRef.current.value = "";
+    // also reset mute state
+    setIsMuted(false);
+
 
     try {
         const dummyAudioDataUri = 'data:audio/wav;base64,'; 
@@ -216,7 +226,7 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
   const handleSelectClip = (clip: Omit<Clip, 'id'|'captions'>) => {
     setStart(clip.start);
     setEnd(clip.end);
-    setFilter(clip.filter);
+    setFilters(clip.filters);
     setAspectRatio(clip.aspectRatio);
     setIsMuted(clip.isMuted);
     setOverlayAudioUrl(clip.overlayAudioUrl || null);
@@ -233,19 +243,40 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
       setOverlayAudioFile(file);
       const url = URL.createObjectURL(file);
       setOverlayAudioUrl(url);
-      toast({title: 'Audio Added', description: `Added ${file.name}`})
+      setIsMuted(true); // Automatically mute original video
+      toast({title: 'Audio Added', description: `Added ${file.name} and muted original video.`})
     }
   };
 
-  const vhsClass = "after:content-[''] after:absolute after:top-0 after:left-0 after:w-full after:h-full after:bg-[rgba(0,0,0,0.1)] after:z-10 after:pointer-events-none after:animate-vhs-scanlines";
-  const getFilterClass = (f: VideoFilter) => {
-    switch(f) {
-      case 'bw': return 'grayscale';
-      case 'night-vision': return 'grayscale brightness-150 contrast-150 sepia-[.2] invert-[.1]';
-      case 'vhs': return 'vhs-filter';
-      default: return '';
-    }
+  const handleFilterChange = (filterId: VideoFilter) => {
+    setFilters(prev => {
+        const newFilters = prev.includes(filterId) 
+            ? prev.filter(f => f !== filterId)
+            : [...prev, filterId];
+        // Ensure 'none' is removed if another filter is added, and added if all others are removed
+        const otherFilters = newFilters.filter(f => f !== 'none');
+        if (otherFilters.length === 0) return ['none'];
+        return otherFilters;
+    });
   };
+
+  const getFilterClass = (f: VideoFilter[]) => {
+    const filterClasses = f.map(filter => {
+      switch(filter) {
+        case 'bw': return 'grayscale';
+        case 'night-vision': return 'night-vision-filter';
+        case 'vhs': return 'vhs-filter';
+        default: return '';
+      }
+    }).join(' ');
+
+    return filterClasses;
+  };
+  
+  const vhsClass = "after:content-[''] after:absolute after:top-0 after:left-0 after:w-full after:h-full after:bg-[rgba(0,0,0,0.1)] after:z-10 after:pointer-events-none after:animate-vhs-scanlines";
+  
+  const activeFilters = activeClipForPreview?.filters ?? filters;
+  const activeAspectRatio = activeClipForPreview?.aspectRatio ?? aspectRatio;
 
   const getAspectRatioClass = (ar: AspectRatio) => {
     switch(ar) {
@@ -262,10 +293,10 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
         <CardContent className="p-2 md:p-4">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 space-y-4">
-               <div ref={videoWrapperRef} className={cn("w-full mx-auto bg-black rounded-lg overflow-hidden transition-all duration-300", getAspectRatioClass(activeClipForPreview?.aspectRatio ?? aspectRatio))}>
-                  <div className={cn("relative w-full h-full", getFilterClass(activeClipForPreview?.filter ?? filter))}>
+               <div ref={videoWrapperRef} className={cn("w-full mx-auto bg-black rounded-lg overflow-hidden transition-all duration-300", getAspectRatioClass(activeAspectRatio))}>
+                  <div className={cn("relative w-full h-full", getFilterClass(activeFilters))}>
                     <video ref={videoRef} src={videoUrl} className="h-full w-full object-cover" controls={false} crossOrigin="anonymous" playsInline/>
-                    {activeClipForPreview?.filter === 'vhs' && <div className="vhs-overlay"></div>}
+                    {activeFilters.includes('vhs') && <div className="vhs-overlay"></div>}
                     {activeClipForPreview && activeClipForPreview.captions && (
                       <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-full px-4 text-center z-20">
                         <p className="py-2 px-4 text-lg md:text-xl font-bold text-white bg-black/60 rounded-md inline">
@@ -303,32 +334,36 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
                         <Input id="end-time" type="number" value={end.toFixed(2)} onChange={(e) => setEnd(parseFloat(e.target.value) || 0)} step="0.1" min={start} max={duration}/>
                     </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                        <Label htmlFor="aspect-ratio">Aspect Ratio</Label>
-                        <Select value={aspectRatio} onValueChange={(v) => setAspectRatio(v as AspectRatio)}>
-                          <SelectTrigger id="aspect-ratio"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="source">Source</SelectItem>
-                            <SelectItem value="9:16">9:16 (Vertical)</SelectItem>
-                            <SelectItem value="1:1">1:1 (Square)</SelectItem>
-                            <SelectItem value="16:9">16:9 (Landscape)</SelectItem>
-                          </SelectContent>
-                        </Select>
-                    </div>
-                    <div className="space-y-1">
-                        <Label htmlFor="filter">Filter</Label>
-                        <Select value={filter} onValueChange={(v) => setFilter(v as VideoFilter)}>
-                          <SelectTrigger id="filter"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="none">None</SelectItem>
-                            <SelectItem value="bw">Black & White</SelectItem>
-                            <SelectItem value="night-vision">Night Vision</SelectItem>
-                            <SelectItem value="vhs">VHS</SelectItem>
-                          </SelectContent>
-                        </Select>
+                
+                <div className="space-y-1">
+                    <Label>Aspect Ratio</Label>
+                    <Select value={aspectRatio} onValueChange={(v) => setAspectRatio(v as AspectRatio)}>
+                      <SelectTrigger id="aspect-ratio"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="source">Source</SelectItem>
+                        <SelectItem value="9:16">9:16 (Vertical)</SelectItem>
+                        <SelectItem value="1:1">1:1 (Square)</SelectItem>
+                        <SelectItem value="16:9">16:9 (Landscape)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                </div>
+                
+                <div className="space-y-2">
+                    <Label>Filters</Label>
+                    <div className="grid grid-cols-2 gap-2">
+                        {filterOptions.map(option => (
+                             <Label key={option.id} className="flex items-center gap-2 p-2 rounded-md border bg-card hover:bg-accent/50 cursor-pointer">
+                                <Checkbox
+                                    id={`filter-${option.id}`}
+                                    checked={filters.includes(option.id)}
+                                    onCheckedChange={() => handleFilterChange(option.id)}
+                                />
+                                <span className="text-sm font-medium">{option.label}</span>
+                            </Label>
+                        ))}
                     </div>
                 </div>
+
                 <div className="flex items-center gap-2">
                     <Button onClick={() => audioInputRef.current?.click()} variant="outline" className="w-full">
                         <Upload /> Upload Audio

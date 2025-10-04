@@ -18,7 +18,7 @@ import {
 } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
 import { Captions, Download, Play, Trash2, Loader2, Film, Ratio, AudioWaveform, VolumeX } from 'lucide-react';
-import type { Clip } from '@/app/page';
+import type { Clip, VideoFilter } from '@/app/page';
 import { useToast } from '@/hooks/use-toast';
 import { formatTime } from '@/lib/utils';
 import { Input } from '../ui/input';
@@ -79,6 +79,18 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
     toast({ title: 'Clip removed.'});
   };
 
+  const getFilterString = (filters: VideoFilter[]): string => {
+    return filters.map(filter => {
+        switch (filter) {
+            case 'bw': return 'grayscale(100%)';
+            case 'night-vision': return 'grayscale(100%) brightness(1.2) sepia(100%) hue-rotate(80deg) saturate(200%)';
+            // VHS is handled separately with canvas drawing
+            case 'vhs': return ''; 
+            default: return '';
+        }
+    }).filter(f => f).join(' ');
+  };
+
   const exportClip = async (clip: Clip) => {
     if (!videoElement) {
       toast({ variant: 'destructive', title: 'Video element not found.' });
@@ -115,10 +127,14 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
 
       let overlayAudio: HTMLAudioElement | null = null;
       let combinedStream: MediaStream | null = null;
+      
+      const videoCanvasStream = canvas.captureStream(30);
 
       if(clip.overlayAudioUrl) {
           overlayAudio = new Audio(clip.overlayAudioUrl);
           overlayAudio.currentTime = 0;
+          await overlayAudio.play();
+          await overlayAudio.pause(); // Preload the audio
           
           const audioContext = new AudioContext();
           const audioDestination = audioContext.createMediaStreamDestination();
@@ -126,14 +142,13 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
           const sourceNode = audioContext.createMediaElementSource(overlayAudio);
           sourceNode.connect(audioDestination);
           
-          const videoStream = canvas.captureStream(30);
           combinedStream = new MediaStream([
-              ...videoStream.getVideoTracks(), 
+              ...videoCanvasStream.getVideoTracks(), 
               ...audioDestination.stream.getAudioTracks()
           ]);
       }
 
-      const streamToRecord = combinedStream || canvas.captureStream(30);
+      const streamToRecord = combinedStream || videoCanvasStream;
 
       const recorder = new MediaRecorder(streamToRecord, { mimeType: 'video/webm;codecs=vp9,opus' });
       const chunks: Blob[] = [];
@@ -176,10 +191,7 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
         context.save();
         context.clearRect(0, 0, canvas.width, canvas.height);
         
-        let filter = 'none';
-        if (clip.filter === 'bw') filter = 'grayscale(100%)';
-        if (clip.filter === 'night-vision') filter = 'grayscale(100%) brightness(1.5) contrast(1.5) sepia(20%) invert(10%)';
-        context.filter = filter;
+        context.filter = getFilterString(clip.filters);
 
         // Calculate cropping
         let sourceX = 0, sourceY = 0, sourceWidth = videoElement.videoWidth, sourceHeight = videoElement.videoHeight;
@@ -193,7 +205,7 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
         context.drawImage(videoElement, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
         context.filter = 'none';
 
-        if (clip.filter === 'vhs') {
+        if (clip.filters.includes('vhs')) {
             context.fillStyle = 'rgba(0, 0, 0, 0.1)';
             for (let i = 0; i < canvas.height; i += 4) {
                 context.fillRect(0, i, canvas.width, 2);
@@ -233,13 +245,16 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
     return null;
   }
 
-  const getFilterName = (filter: string) => {
-    switch (filter) {
-      case 'bw': return 'B&W';
-      case 'night-vision': return 'Night Vision';
-      case 'vhs': return 'VHS';
-      default: return 'None';
-    }
+  const getFilterNames = (filters: VideoFilter[]) => {
+    if (filters.includes('none') || filters.length === 0) return 'None';
+    return filters.map(filter => {
+      switch (filter) {
+        case 'bw': return 'B&W';
+        case 'night-vision': return 'Night Vision';
+        case 'vhs': return 'VHS';
+        default: return '';
+      }
+    }).filter(f => f).join(', ');
   };
 
   return (
@@ -267,7 +282,7 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
                 </p>
                 <div className='flex flex-wrap gap-2 text-xs text-muted-foreground items-center'>
                     <span className="flex items-center gap-1"><Ratio className="size-3" /> {clip.aspectRatio}</span>
-                    <span className="flex items-center gap-1"><Film className="size-3" /> {getFilterName(clip.filter)}</span>
+                    <span className="flex items-center gap-1"><Film className="size-3" /> {getFilterNames(clip.filters)}</span>
                     {clip.overlayAudioUrl && <span className="flex items-center gap-1"><AudioWaveform className="size-3 text-accent" /> Custom Audio</span>}
                     {clip.isMuted && <span className="flex items-center gap-1"><VolumeX className="size-3 text-destructive" /> Muted</span>}
                 </div>
