@@ -86,7 +86,7 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
       if (playIntervalRef.current) clearInterval(playIntervalRef.current);
       if (overlayAudioUrl) URL.revokeObjectURL(overlayAudioUrl);
     };
-  }, [activeVideoIndex, videoSources, clips.length]);
+  }, [activeVideoIndex, videoSources, clips.length, activeClipForPreview]);
   
   const handleSeek = (event: React.ChangeEvent<HTMLInputElement>) => {
     const time = parseFloat(event.target.value);
@@ -179,7 +179,7 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
 
     try {
         const videoDurations = await Promise.all(
-            videoSources.map(source => new Promise<number>((resolve) => {
+            videoSources.map(source => new Promise<number>((resolve, reject) => {
                 const video = document.createElement('video');
                 video.preload = 'metadata';
                 video.onloadedmetadata = () => {
@@ -187,15 +187,16 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
                     resolve(video.duration);
                 };
                 video.onerror = () => {
-                    URL.revokeObjectURL(video.src); 
-                    console.warn(`Could not load metadata for ${source.file.name}.`);
-                    resolve(0);
+                    URL.revokeObjectURL(video.src);
+                    reject(new Error(`Could not load video: ${source.file.name}`));
                 };
                 video.src = URL.createObjectURL(source.file);
             }))
         );
         
-        const validSources = videoSources.map((source, index) => ({...source, duration: videoDurations[index]})).filter(s => s.duration > 3);
+        const validSources = videoSources
+            .map((source, index) => ({...source, duration: videoDurations[index]}))
+            .filter(s => s.duration > 3);
 
         if(validSources.length === 0){
              toast({ variant: 'destructive', title: 'Video Processing Error', description: `No source videos are long enough for a 3-second clip.`});
@@ -207,20 +208,19 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
         let currentVideoIndex = 0;
 
         for (let i = 0; i < 25; i++) {
-            const sourceIndexInValidSources = currentVideoIndex % validSources.length;
-            const source = validSources[sourceIndexInValidSources];
-            const sourceDuration = source.duration;
+            const sourceInfo = validSources[currentVideoIndex % validSources.length];
+            const sourceDuration = sourceInfo.duration;
             
             const startTime = Math.random() * (sourceDuration - 3);
             const endTime = startTime + 3;
 
-            const originalSourceIndex = videoSources.findIndex(s => s.url === source.url);
+            const originalSourceIndex = videoSources.findIndex(s => s.url === sourceInfo.url);
 
             newClips.push({
                 id: Date.now() + Math.random(),
                 start: startTime,
                 end: endTime,
-                title: `Cut ${newClips.length + 1} (Source ${originalSourceIndex + 1})`,
+                title: `Cut ${clips.length + newClips.length + 1} (Source ${originalSourceIndex + 1})`,
                 filters: ['none'],
                 isMuted: false,
                 sourceVideo: originalSourceIndex,
@@ -454,10 +454,8 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
                   </Button>
                 ) : (
                   <Button onClick={() => {
-                    setIsLoading(true);
-                    toast({title: "AI Processing", description: "This feature is only available with multiple video sources."});
-                    setTimeout(() => setIsLoading(false), 2000);
-                  }} disabled={isLoading} className="w-full">
+                    toast({title: "Multi-Cam Unavailable", description: "This feature requires at least two video sources."});
+                  }} className="w-full">
                       <Sparkles className="mr-2 h-4 w-4" />
                       Create Multi-Cam Edit
                   </Button>
