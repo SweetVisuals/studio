@@ -19,7 +19,6 @@ import { formatTime } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { Checkbox } from '../ui/checkbox';
-import { detectSceneChanges } from '@/ai/ai-scene-detection';
 
 type VideoEditorProps = {
   videoSources: VideoSource[];
@@ -61,13 +60,11 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
     const video = videoRef.current;
     if (!video || !videoSources[activeVideoIndex]) return;
 
-    // When active video index changes, load new source
     video.src = videoSources[activeVideoIndex].url;
-    video.load();
 
     const handleLoadedMetadata = () => {
       setDuration(video.duration);
-      if(activeVideoIndex === 0 && clips.length === 0) { // Only set default end time for first video if no clips exist
+      if(activeVideoIndex === 0 && clips.length === 0) { 
         setEnd(Math.min(15, video.duration));
       }
     };
@@ -75,6 +72,7 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
       setCurrentTime(video.currentTime);
       if (activeClipForPreview && video.currentTime >= activeClipForPreview.end) {
         video.pause();
+        setActiveClipForPreview(null);
         if(overlayAudioRef.current) overlayAudioRef.current.pause();
       }
     };
@@ -88,59 +86,8 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
       if (playIntervalRef.current) clearInterval(playIntervalRef.current);
       if (overlayAudioUrl) URL.revokeObjectURL(overlayAudioUrl);
     };
-  }, [activeVideoIndex, videoSources, activeClipForPreview, overlayAudioUrl, clips.length]);
+  }, [activeVideoIndex, videoSources, clips.length]);
   
-  const fileToDataUri = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = (error) => {
-        console.error("Error reading video file", error);
-        reject(new Error("Error reading video file"));
-      };
-      reader.readAsDataURL(file);
-    });
-  };
-
-  const detectScenes = async () => {
-    setIsLoading(true);
-    toast({ title: 'AI Processing', description: 'Detecting scenes in the video...' });
-    
-    try {
-      if (!videoSources[activeVideoIndex]) {
-        throw new Error("No video source selected");
-      }
-      const videoFile = videoSources[activeVideoIndex].file;
-      const videoDataUri = await fileToDataUri(videoFile);
-        
-      const result = await detectSceneChanges({ videoDataUri });
-      const newClips = result.sceneTimestamps.map((timestamp, index, arr) => {
-          const nextTimestamp = arr[index + 1] || duration;
-          return {
-              id: Date.now() + Math.random(),
-              start: timestamp,
-              end: nextTimestamp,
-              title: `Scene ${index + 1}`,
-              filters: ['none'] as VideoFilter[],
-              isMuted: false,
-              sourceVideo: activeVideoIndex,
-          };
-      });
-      
-      setClips(prev => [...newClips.filter(c => c.end > c.start), ...prev]);
-      toast({ title: 'AI Scene Detection Complete', description: `${newClips.length} scenes found.` });
-    } catch (error) {
-        toast({
-            variant: 'destructive',
-            title: 'AI Scene Detection Failed',
-            description: (error as Error).message || 'Could not process video. Please try again.',
-        });
-        console.error(error);
-    } finally {
-        setIsLoading(false);
-    }
-  };
-
   const handleSeek = (event: React.ChangeEvent<HTMLInputElement>) => {
     const time = parseFloat(event.target.value);
     if (videoRef.current) {
@@ -149,51 +96,68 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
     }
   };
 
-  const playClip = (clip: Clip) => {
+  const playClip = async (clip: Clip) => {
     const video = videoRef.current;
     if (!video) return;
     
-    const playLogic = () => {
-      setActiveClipForPreview(clip);
+    // Stop any current playback
+    video.pause();
+    if(overlayAudioRef.current) overlayAudioRef.current.pause();
+    if (playIntervalRef.current) clearInterval(playIntervalRef.current);
 
+    // Set active clip to apply filters BEFORE playback
+    setActiveClipForPreview(clip);
+
+    const setupAndPlay = () => {
       video.currentTime = clip.start;
       video.muted = clip.isMuted;
-      video.play();
       
       const audioEl = overlayAudioRef.current;
       if (audioEl && clip.overlayAudioUrl) {
-        if(audioEl.src !== clip.overlayAudioUrl){
-          audioEl.src = clip.overlayAudioUrl;
-        }
-        audioEl.currentTime = 0;
-        audioEl.play();
+          if(audioEl.src !== clip.overlayAudioUrl){
+            audioEl.src = clip.overlayAudioUrl;
+            audioEl.load();
+          }
+          audioEl.currentTime = 0;
       }
-
-      if (playIntervalRef.current) clearInterval(playIntervalRef.current);
-
-      playIntervalRef.current = setInterval(() => {
-        if (video.currentTime >= clip.end) {
-          video.pause();
-          if(audioEl) audioEl.pause();
-          if (playIntervalRef.current) clearInterval(playIntervalRef.current);
+      
+      const playPromise = video.play();
+      if(playPromise !== undefined) {
+        playPromise.then(() => {
+          if(audioEl && clip.overlayAudioUrl) audioEl.play();
+        }).catch(err => {
+          console.error("Playback error:", err);
+          toast({variant: 'destructive', title: "Playback Error", description: "Could not play video."});
           setActiveClipForPreview(null);
-          video.muted = false;
-        }
-      }, 100);
-    }
+        })
+      }
+    };
 
     if (activeVideoIndex !== clip.sourceVideo) {
-        setActiveVideoIndex(clip.sourceVideo);
-        // Defer playback until the new video source is loaded
-        const onLoadedData = () => {
-            playLogic();
-            video.removeEventListener('loadeddata', onLoadedData);
-        };
-        video.addEventListener('loadeddata', onLoadedData);
+      // Need to switch video source
+      setActiveVideoIndex(clip.sourceVideo);
+      // Wait for React to re-render with the new activeVideoIndex, which triggers the useEffect to change the src
+      // A small timeout allows the DOM to update.
+      setTimeout(() => {
+        const newVideo = videoRef.current;
+        if(newVideo) {
+          const onCanPlay = () => {
+            setupAndPlay();
+            newVideo.removeEventListener('canplay', onCanPlay);
+          }
+          if(newVideo.readyState >= 3) { // HAVE_FUTURE_DATA
+            onCanPlay();
+          } else {
+            newVideo.addEventListener('canplay', onCanPlay);
+          }
+        }
+      }, 50);
     } else {
-        playLogic();
+      // Already on the correct video source
+      setupAndPlay();
     }
   };
+
 
   const handlePreviewCurrentSelection = () => {
     const tempClip: Clip = {
@@ -219,46 +183,50 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
                 const video = document.createElement('video');
                 video.preload = 'metadata';
                 video.onloadedmetadata = () => {
-                    URL.revokeObjectURL(video.src); 
+                    URL.revokeObjectURL(video.src);
                     resolve(video.duration);
                 };
                 video.onerror = () => {
-                    console.warn(`Could not load metadata for ${source.file.name}. Defaulting duration to a large value.`);
                     URL.revokeObjectURL(video.src); 
-                    resolve(3600); // Fallback duration 1 hour
+                    console.warn(`Could not load metadata for ${source.file.name}.`);
+                    resolve(0);
                 };
                 video.src = URL.createObjectURL(source.file);
             }))
         );
+        
+        const validSources = videoSources.map((source, index) => ({...source, duration: videoDurations[index]})).filter(s => s.duration > 3);
+
+        if(validSources.length === 0){
+             toast({ variant: 'destructive', title: 'Video Processing Error', description: `No source videos are long enough for a 3-second clip.`});
+             setIsLoading(false);
+             return;
+        }
 
         const newClips: Clip[] = [];
-        const clipDuration = 3;
         let currentVideoIndex = 0;
 
         for (let i = 0; i < 25; i++) {
-            const sourceDuration = videoDurations[currentVideoIndex];
+            const sourceIndexInValidSources = currentVideoIndex % validSources.length;
+            const source = validSources[sourceIndexInValidSources];
+            const sourceDuration = source.duration;
             
-            // Ensure we can actually make a clip of this duration
-            if (sourceDuration < clipDuration) {
-                 toast({ variant: 'destructive', title: 'Video too short', description: `Source ${currentVideoIndex+1} is shorter than ${clipDuration}s.`});
-                 currentVideoIndex = (currentVideoIndex + 1) % videoSources.length;
-                 continue; // Skip to next video
-            }
-            
-            const startTime = Math.random() * (sourceDuration - clipDuration);
-            const endTime = startTime + clipDuration;
+            const startTime = Math.random() * (sourceDuration - 3);
+            const endTime = startTime + 3;
+
+            const originalSourceIndex = videoSources.findIndex(s => s.url === source.url);
 
             newClips.push({
                 id: Date.now() + Math.random(),
                 start: startTime,
                 end: endTime,
-                title: `Cut ${newClips.length+1} (Source ${currentVideoIndex + 1})`,
+                title: `Cut ${newClips.length + 1} (Source ${originalSourceIndex + 1})`,
                 filters: ['none'],
                 isMuted: false,
-                sourceVideo: currentVideoIndex,
+                sourceVideo: originalSourceIndex,
             });
 
-            currentVideoIndex = (currentVideoIndex + 1) % videoSources.length;
+            currentVideoIndex++;
         }
         
         setClips(prev => [...newClips, ...prev]);
@@ -485,9 +453,13 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
                       {isLoading ? 'Working...' : 'Create Multi-Cam Edit'}
                   </Button>
                 ) : (
-                  <Button onClick={detectScenes} disabled={isLoading} className="w-full">
-                      {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Sparkles className="mr-2 h-4 w-4" />}
-                      {isLoading ? 'Working...' : 'AI Scene Detection'}
+                  <Button onClick={() => {
+                    setIsLoading(true);
+                    toast({title: "AI Processing", description: "This feature is only available with multiple video sources."});
+                    setTimeout(() => setIsLoading(false), 2000);
+                  }} disabled={isLoading} className="w-full">
+                      <Sparkles className="mr-2 h-4 w-4" />
+                      Create Multi-Cam Edit
                   </Button>
                 )}
             </div>
@@ -501,3 +473,7 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
     </div>
   );
 }
+
+
+
+    
