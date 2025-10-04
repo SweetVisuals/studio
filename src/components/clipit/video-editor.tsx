@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, Play, Sparkles, Loader2, Volume2, VolumeX, Upload, Music4, Film, UploadCloud } from 'lucide-react';
+import { Plus, Play, Sparkles, Loader2, Volume2, VolumeX, Upload, Music4, Film, UploadCloud, Pause } from 'lucide-react';
 import ClipList from './clip-list';
 import type { Clip, VideoFilter, AspectRatio, VideoSource, ClipCut } from '@/app/page';
 import { formatTime } from '@/lib/utils';
@@ -41,6 +41,7 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
   const [isLoading, setIsLoading] = useState(false);
   const [activeClipForPreview, setActiveClipForPreview] = useState<Clip | null>(null);
   const [currentCutIndex, setCurrentCutIndex] = useState(0);
+  const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
 
 
   const [filters, setFilters] = useState<VideoFilter[]>(['none']);
@@ -50,24 +51,20 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
   const [isMuted, setIsMuted] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
-  const playIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const overlayAudioRef = useRef<HTMLAudioElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
   const moreVideoInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   
   const videoWrapperRef = useRef<HTMLDivElement>(null);
-
+  
+  // Effect for handling video source and metadata loading
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !videoSources[activeVideoIndex]) return;
 
     const currentSrc = video.src;
     const newSrc = videoSources[activeVideoIndex].url;
-
-    if (currentSrc !== newSrc) {
-        video.src = newSrc;
-    }
 
     const handleLoadedMetadata = () => {
       setDuration(video.duration);
@@ -76,73 +73,96 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
       }
     };
     
-    const handleTimeUpdate = () => {
-      if (!video) return;
-      setCurrentTime(video.currentTime);
-    
-      if (activeClipForPreview) {
-        if (activeClipForPreview.cuts && activeClipForPreview.cuts.length > 0) {
-          const currentCut = activeClipForPreview.cuts[currentCutIndex];
-          // Check if the current time has exceeded the end time of the current cut
-          if (video.currentTime >= currentCut.end) {
-            video.pause();
-            const nextCutIndex = currentCutIndex + 1;
-            
-            // If there are more cuts to play
-            if (nextCutIndex < activeClipForPreview.cuts.length) {
-              setCurrentCutIndex(nextCutIndex);
-              const nextCut = activeClipForPreview.cuts[nextCutIndex];
-              
-              // Function to play the next cut
-              const playNextCut = () => {
-                if(videoRef.current) {
-                  videoRef.current.currentTime = nextCut.start;
-                  videoRef.current.play().catch(e => console.error("Playback failed for next cut", e));
-                }
-              };
-
-              // If the video source is different, switch it
-              if (activeVideoIndex !== nextCut.sourceVideo) {
-                setActiveVideoIndex(nextCut.sourceVideo);
-                // We need to wait for the new source to be loaded
-                const onCanPlay = () => {
-                  playNextCut();
-                  video.removeEventListener('canplay', onCanPlay);
-                };
-                video.addEventListener('canplay', onCanPlay);
-                video.load(); // Trigger load for new source
-              } else {
-                // If the source is the same, just seek and play
-                playNextCut();
-              }
-            } else {
-              // End of multi-cut preview
-              setActiveClipForPreview(null);
-              setCurrentCutIndex(0);
-              if (overlayAudioRef.current) overlayAudioRef.current.pause();
-            }
-          }
-        } else {
-          // Single cut clip logic
-          if (video.currentTime >= activeClipForPreview.end) {
-            video.pause();
-            setActiveClipForPreview(null);
-            if(overlayAudioRef.current) overlayAudioRef.current.pause();
-          }
-        }
-      }
-    };
+    if (currentSrc !== newSrc) {
+        video.src = newSrc;
+        video.load();
+    }
     
     video.addEventListener('loadedmetadata', handleLoadedMetadata);
-    video.addEventListener('timeupdate', handleTimeUpdate);
-
+    
     return () => {
       video.removeEventListener('loadedmetadata', handleLoadedMetadata);
-      video.removeEventListener('timeupdate', handleTimeUpdate);
-      if (playIntervalRef.current) clearInterval(playIntervalRef.current);
     };
-  }, [activeVideoIndex, videoSources, clips.length, activeClipForPreview, currentCutIndex]);
+  }, [activeVideoIndex, videoSources, clips.length]);
+
+  // Effect for handling time updates from the video element
+  useEffect(() => {
+      const video = videoRef.current;
+      if (!video) return;
+
+      const handleTimeUpdate = () => {
+        if (!video) return;
+        setCurrentTime(video.currentTime);
+    
+        if (activeClipForPreview && isPreviewPlaying) {
+          const isMultiCut = activeClipForPreview.cuts && activeClipForPreview.cuts.length > 0;
+          if (isMultiCut) {
+            const currentCut = activeClipForPreview.cuts![currentCutIndex];
+            if (video.currentTime >= currentCut.end) {
+              const nextCutIndex = currentCutIndex + 1;
+              if (nextCutIndex < activeClipForPreview.cuts!.length) {
+                setCurrentCutIndex(nextCutIndex);
+              } else {
+                stopPreview();
+              }
+            }
+          } else {
+            // Single cut clip logic
+            if (video.currentTime >= activeClipForPreview.end) {
+              stopPreview();
+            }
+          }
+        }
+      };
+
+      video.addEventListener('timeupdate', handleTimeUpdate);
+      return () => video.removeEventListener('timeupdate', handleTimeUpdate);
+  }, [activeClipForPreview, currentCutIndex, isPreviewPlaying]);
   
+  // Effect for controlling playback during multi-cut previews
+  useEffect(() => {
+    if (!isPreviewPlaying || !activeClipForPreview) return;
+    
+    const video = videoRef.current;
+    if (!video) return;
+
+    let startSourceVideo: number;
+    let startTime: number;
+    const isMultiCut = activeClipForPreview.cuts && activeClipForPreview.cuts.length > 0;
+
+    if (isMultiCut) {
+        const currentCut = activeClipForPreview.cuts![currentCutIndex];
+        startSourceVideo = currentCut.sourceVideo;
+        startTime = currentCut.start;
+    } else {
+        startSourceVideo = activeClipForPreview.sourceVideo;
+        startTime = activeClipForPreview.start;
+    }
+
+    const setupAndPlay = () => {
+        if (!videoRef.current || !isPreviewPlaying) return;
+        videoRef.current.currentTime = startTime;
+        videoRef.current.muted = activeClipForPreview.isMuted;
+        videoRef.current.play().catch(e => {
+            console.error("Playback failed", e);
+            stopPreview();
+        });
+    };
+
+    if (activeVideoIndex !== startSourceVideo) {
+        setActiveVideoIndex(startSourceVideo);
+        // Wait for the source to change, then play. The `canplay` listener ensures it's ready.
+        const onCanPlay = () => {
+            setupAndPlay();
+            video.removeEventListener('canplay', onCanPlay);
+        };
+        video.addEventListener('canplay', onCanPlay, { once: true });
+    } else {
+        setupAndPlay();
+    }
+
+  }, [isPreviewPlaying, activeClipForPreview, currentCutIndex]);
+
   const handleSeek = (event: React.ChangeEvent<HTMLInputElement>) => {
     const time = parseFloat(event.target.value);
     if (videoRef.current) {
@@ -151,18 +171,29 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
     }
   };
 
+  const stopPreview = () => {
+    const video = videoRef.current;
+    const audio = overlayAudioRef.current;
+    if(video) video.pause();
+    if(audio) audio.pause();
+    setActiveClipForPreview(null);
+    setCurrentCutIndex(0);
+    setIsPreviewPlaying(false);
+  }
+
   const playClip = (clipToPlay: Clip) => {
+    if (isPreviewPlaying) {
+      stopPreview();
+      return;
+    }
+
     const video = videoRef.current;
     if (!video) return;
   
-    video.pause();
-    if (overlayAudioRef.current) {
-      overlayAudioRef.current.pause();
-    }
-    
-    // Set the active clip for preview, which will be used by the timeupdate handler
     setActiveClipForPreview(clipToPlay);
-  
+    setCurrentCutIndex(0); // Reset to the first cut
+    setIsPreviewPlaying(true);
+    
     const audioEl = overlayAudioRef.current;
     if (audioEl && clipToPlay.overlayAudioUrl) {
       if (audioEl.src !== clipToPlay.overlayAudioUrl) {
@@ -170,56 +201,7 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
         audioEl.load();
       }
       audioEl.currentTime = 0;
-    }
-  
-    let startSourceVideo: number;
-    let startTime: number;
-    
-    // Determine the starting point of the playback
-    if (clipToPlay.cuts && clipToPlay.cuts.length > 0) {
-      setCurrentCutIndex(0); // Reset to the first cut
-      const firstCut = clipToPlay.cuts[0];
-      startSourceVideo = firstCut.sourceVideo;
-      startTime = firstCut.start;
-    } else {
-      startSourceVideo = clipToPlay.sourceVideo;
-      startTime = clipToPlay.start;
-    }
-  
-    const setupAndPlay = (targetVideo: HTMLVideoElement) => {
-      targetVideo.currentTime = startTime;
-      targetVideo.muted = clipToPlay.isMuted;
-  
-      const playPromise = targetVideo.play();
-      if (playPromise !== undefined) {
-        playPromise.then(() => {
-          if (audioEl && clipToPlay.overlayAudioUrl) {
-            audioEl.play().catch(e => console.error("Audio playback failed", e));
-          }
-        }).catch(error => {
-          console.error("Playback failed", error);
-          toast({ variant: 'destructive', title: 'Playback Error', description: 'Could not play video.' });
-          setActiveClipForPreview(null);
-        });
-      }
-    };
-  
-    // If the video source is different, switch it first
-    if (activeVideoIndex !== startSourceVideo) {
-      setActiveVideoIndex(startSourceVideo);
-      // When the source changes, the useEffect for `activeVideoIndex` will handle loading.
-      // We add a 'canplay' listener to ensure we start playing only when ready.
-      const onCanPlay = () => {
-        const newVideoEl = videoRef.current;
-        if (newVideoEl) {
-          setupAndPlay(newVideoEl);
-          newVideoEl.removeEventListener('canplay', onCanPlay);
-        }
-      };
-      video.addEventListener('canplay', onCanPlay);
-    } else {
-      // If the source is the same, just set up and play
-      setupAndPlay(video);
+      audioEl.play().catch(e => console.error("Audio playback failed", e));
     }
   };
 
@@ -237,7 +219,7 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
     playClip(tempClip);
   }
   
- const createMultiCamEdit = async () => {
+  const createMultiCamEdit = async () => {
     if (!overlayAudioFile) {
       toast({ variant: 'destructive', title: 'Audio Required', description: 'Please upload an audio file to base the multi-cam edit on.' });
       return;
@@ -254,9 +236,11 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
         const audio = document.createElement('audio');
         audio.preload = 'metadata';
         audio.onloadedmetadata = () => {
+          URL.revokeObjectURL(audio.src); // Clean up temp object URL
           resolve(audio.duration);
         };
         audio.onerror = (e) => {
+          URL.revokeObjectURL(audio.src); // Clean up temp object URL
           reject(new Error('Could not load audio file.'));
         };
         audio.src = URL.createObjectURL(overlayAudioFile);
@@ -287,12 +271,11 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
       for (let i = 0; i < numCuts; i++) {
         const sourceInfo = validSources[i % validSources.length];
         const startTime = Math.random() * (sourceInfo.duration - clipDuration);
-        const endTime = startTime + clipDuration;
-
+        
         cuts.push({
           sourceVideo: sourceInfo.originalIndex,
           start: startTime,
-          end: endTime,
+          end: startTime + clipDuration,
         });
       }
 
@@ -300,10 +283,10 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
         id: Date.now(),
         start: 0,
         end: audioDuration,
-        title: `Multi-Cam Edit: ${overlayAudioFile.name}`,
+        title: `Multi-Cam: ${overlayAudioFile.name.split('.').slice(0, -1).join('.')}`,
         filters: filters,
         isMuted: true,
-        overlayAudioUrl: URL.createObjectURL(overlayAudioFile),
+        overlayAudioUrl: URL.createObjectURL(overlayAudioFile), // Keep one URL for the final clip
         sourceVideo: -1, // Indicates a multi-source clip
         cuts: cuts,
       };
@@ -331,8 +314,10 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
     const id = Date.now();
     
     let newOverlayUrl = overlayAudioUrl;
-    if(overlayAudioFile) {
+    if(overlayAudioFile && !clips.some(c => c.overlayAudioUrl === overlayAudioUrl)) {
         newOverlayUrl = URL.createObjectURL(overlayAudioFile);
+    } else if (overlayAudioFile) {
+        newOverlayUrl = overlayAudioUrl;
     }
 
     const newClip: Clip = {
@@ -349,10 +334,8 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
     setClips((prev) => [newClip, ...prev]);
     toast({ title: 'Clip Added', description: `"${newClip.title}" was added.` });
 
+    // Reset editing state
     setOverlayAudioFile(null);
-    if(overlayAudioUrl && !newClip.overlayAudioUrl) {
-        URL.revokeObjectURL(overlayAudioUrl);
-    }
     setOverlayAudioUrl(null);
     setIsMuted(false);
     setFilters(['none']);
@@ -363,7 +346,11 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
     const file = e.target.files?.[0];
     if (file) {
       if(overlayAudioUrl) {
-          URL.revokeObjectURL(overlayAudioUrl);
+          // Check if this URL is used by any other clip before revoking
+          const isUrlInUse = clips.some(clip => clip.overlayAudioUrl === overlayAudioUrl) || (overlayAudioUrl === newClip.overlayAudioUrl);
+          if (!isUrlInUse) {
+            URL.revokeObjectURL(overlayAudioUrl);
+          }
       }
       setOverlayAudioFile(file);
       const url = URL.createObjectURL(file);
@@ -405,6 +392,18 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
         case '16:9': return 'aspect-[16/9]';
         default: return 'aspect-video';
     }
+  };
+
+  const currentPreviewIcon = isPreviewPlaying ? <Pause /> : <Play />;
+  const newClip = { // Used for audio upload logic
+      id: -1,
+      start: 0,
+      end: 0,
+      title: '',
+      filters: [],
+      isMuted: false,
+      sourceVideo: 0,
+      overlayAudioUrl: overlayAudioUrl || undefined
   };
 
   return (
@@ -520,7 +519,7 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
                 </Card>
 
                  <Button onClick={handlePreviewCurrentSelection} className="w-full bg-accent hover:bg-accent/90">
-                   <Play /> Preview Selection
+                   {currentPreviewIcon} {isPreviewPlaying && activeClipForPreview?.id === -1 ? 'Stop' : 'Preview Selection'}
                  </Button>
                  <Button onClick={addClip} className="w-full">
                    <Plus /> Add Clip Manually
@@ -537,9 +536,15 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
       
       <audio ref={overlayAudioRef} className='hidden' crossOrigin="anonymous"/>
 
-      <ClipList clips={clips} setClips={setClips} onPreview={playClip} aspectRatio={aspectRatio} videoSources={videoSources} />
+      <ClipList 
+        clips={clips} 
+        setClips={setClips} 
+        onPreview={playClip} 
+        aspectRatio={aspectRatio} 
+        videoSources={videoSources}
+        activePreviewClipId={activeClipForPreview?.id}
+        isPreviewing={isPreviewPlaying}
+      />
     </div>
   );
 }
-
-    

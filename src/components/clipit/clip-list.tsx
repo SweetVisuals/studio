@@ -7,7 +7,7 @@ import {
   CardContent,
 } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
-import { Download, Play, Trash2, Film, Ratio, AudioWaveform, VolumeX, Video, Copy, Wand2 } from 'lucide-react';
+import { Download, Play, Trash2, Film, Ratio, AudioWaveform, VolumeX, Video, Copy, Wand2, Pause } from 'lucide-react';
 import type { Clip, VideoFilter, AspectRatio, VideoSource } from '@/app/page';
 import { useToast } from '@/hooks/use-toast';
 import { formatTime } from '@/lib/utils';
@@ -19,30 +19,38 @@ type ClipListProps = {
   onPreview: (clip: Clip) => void;
   aspectRatio: AspectRatio;
   videoSources: VideoSource[];
+  activePreviewClipId?: number | null;
+  isPreviewing?: boolean;
 };
 
-export default function ClipList({ clips, setClips, onPreview, aspectRatio, videoSources }: ClipListProps) {
+export default function ClipList({ clips, setClips, onPreview, aspectRatio, videoSources, activePreviewClipId, isPreviewing }: ClipListProps) {
   const [exportingClipId, setExportingClipId] = useState<number | null>(null);
   const [exportProgress, setExportProgress] = useState(0);
 
   const { toast } = useToast();
 
   useEffect(() => {
+    // This effect handles the cleanup of Object URLs for overlay audio.
+    // It runs when the component unmounts.
     return () => {
+        // Create a set of all unique audio URLs currently in use by the clips.
         const audioUrls = new Set(clips.map(c => c.overlayAudioUrl));
+        // Revoke each unique URL to free up memory.
         audioUrls.forEach(url => {
             if(url) URL.revokeObjectURL(url);
         });
     };
-  }, [clips]);
+  }, []); // The empty dependency array ensures this runs only once on unmount.
 
   const deleteClip = (id: number) => {
     setClips((prev) => {
         const clipToDelete = prev.find(c => c.id === id);
         const remainingClips = prev.filter((c) => c.id !== id);
 
+        // If the deleted clip had an audio URL, check if it's still used by other clips.
         if (clipToDelete?.overlayAudioUrl) {
             const isAudioUrlStillInUse = remainingClips.some(c => c.overlayAudioUrl === clipToDelete.overlayAudioUrl);
+            // If the URL is no longer in use, revoke it.
             if (!isAudioUrlStillInUse) {
                 URL.revokeObjectURL(clipToDelete.overlayAudioUrl);
             }
@@ -73,8 +81,10 @@ export default function ClipList({ clips, setClips, onPreview, aspectRatio, vide
       const context = canvas.getContext('2d', { willReadFrequently: true });
       if (!context) throw new Error('Could not get canvas context');
   
-      const firstVidSourceIndex = clip.cuts ? clip.cuts[0].sourceVideo : clip.sourceVideo;
-      if (firstVidSourceIndex === -1) throw new Error('Invalid video source for clip.');
+      const firstVidSourceIndex = clip.cuts && clip.cuts.length > 0 ? clip.cuts[0].sourceVideo : clip.sourceVideo;
+      if (firstVidSourceIndex < 0 || firstVidSourceIndex >= videoSources.length) {
+          throw new Error('Invalid video source for clip.');
+      }
       
       const firstVidSource = videoSources[firstVidSourceIndex];
       const tempVideo = document.createElement('video');
@@ -87,10 +97,14 @@ export default function ClipList({ clips, setClips, onPreview, aspectRatio, vide
       if (aspectRatio !== 'source') {
         const [w, h] = aspectRatio.split(':').map(Number);
         const targetAspectRatio = w / h;
-        if (targetAspectRatio > (tempVideo.videoWidth / tempVideo.videoHeight)) {
-          canvasHeight = Math.round(canvasWidth / targetAspectRatio);
-        } else {
-          canvasWidth = Math.round(canvasHeight * targetAspectRatio);
+        const videoAr = tempVideo.videoWidth / tempVideo.videoHeight;
+
+        if (targetAspectRatio > videoAr) { // Target is wider than video, letterbox top/bottom
+            canvasWidth = tempVideo.videoWidth;
+            canvasHeight = Math.round(canvasWidth / targetAspectRatio);
+        } else { // Target is narrower than video, letterbox left/right
+            canvasHeight = tempVideo.videoHeight;
+            canvasWidth = Math.round(canvasHeight * targetAspectRatio);
         }
       }
       canvas.width = canvasWidth;
@@ -101,8 +115,12 @@ export default function ClipList({ clips, setClips, onPreview, aspectRatio, vide
   
       const canvasStream = canvas.captureStream(30);
       const videoTrack = canvasStream.getVideoTracks()[0];
-      const audioTrack = mainAudioDestination.stream.getAudioTracks()[0];
-      const combinedStream = new MediaStream([videoTrack, audioTrack]);
+      const audioStream = mainAudioDestination.stream;
+      const audioTrack = audioStream.getAudioTracks()[0];
+      
+      const combinedStream = new MediaStream([videoTrack]);
+      if(audioTrack) combinedStream.addTrack(audioTrack);
+
       const recorder = new MediaRecorder(combinedStream, { mimeType: 'video/webm;codecs=vp9,opus' });
   
       const chunks: Blob[] = [];
@@ -140,20 +158,26 @@ export default function ClipList({ clips, setClips, onPreview, aspectRatio, vide
         await new Promise(res => mainAudioElement.oncanplaythrough = res);
         const mainAudioSourceNode = audioContext.createMediaElementSource(mainAudioElement);
         mainAudioSourceNode.connect(mainAudioDestination);
+        mainAudioElement.currentTime = 0;
         await mainAudioElement.play();
       }
       
       const cuts = clip.cuts || [{ sourceVideo: clip.sourceVideo, start: clip.start, end: clip.end }];
-      const totalFrames = cuts.reduce((acc, cut) => acc + ((cut.end - cut.start) * 30), 0);
-      let framesProcessed = 0;
+      const totalDuration = cuts.reduce((acc, cut) => acc + (cut.end - cut.start), 0);
+      let durationProcessed = 0;
   
       for (const cut of cuts) {
         const videoElement = videoElements[cut.sourceVideo];
+        if(!clip.isMuted) {
+            const videoAudioSource = audioContext.createMediaElementSource(videoElement);
+            videoAudioSource.connect(mainAudioDestination);
+        }
+
         videoElement.currentTime = cut.start;
         await videoElement.play();
   
         await new Promise<void>(resolve => {
-          const drawFrame = () => {
+          const drawFrame = (time: number, metadata: any) => {
             if (videoElement.currentTime >= cut.end) {
               videoElement.pause();
               resolve();
@@ -172,10 +196,14 @@ export default function ClipList({ clips, setClips, onPreview, aspectRatio, vide
             const videoAr = videoElement.videoWidth / videoElement.videoHeight;
             const canvasAr = canvas.width / canvas.height;
             let drawWidth = canvas.width, drawHeight = canvas.height, offsetX = 0, offsetY = 0;
-            if (videoAr > canvasAr) {
+            
+            // This is "contain" logic - fit video inside canvas, with black bars
+            if (videoAr > canvasAr) { // video is wider than canvas
+              drawWidth = canvas.width;
               drawHeight = canvas.width / videoAr;
               offsetY = (canvas.height - drawHeight) / 2;
-            } else {
+            } else { // video is taller than canvas
+              drawHeight = canvas.height;
               drawWidth = canvas.height * videoAr;
               offsetX = (canvas.width - drawWidth) / 2;
             }
@@ -183,12 +211,13 @@ export default function ClipList({ clips, setClips, onPreview, aspectRatio, vide
             context.drawImage(videoElement, offsetX, offsetY, drawWidth, drawHeight);
             context.restore();
   
-            framesProcessed++;
-            setExportProgress(Math.round((framesProcessed / totalFrames) * 100));
-  
-            requestAnimationFrame(drawFrame);
+            const frameDuration = metadata.mediaTime - (metadata.previousTime || metadata.mediaTime);
+            durationProcessed += frameDuration;
+            setExportProgress(Math.round((durationProcessed / totalDuration) * 100));
+            
+            videoElement.requestVideoFrameCallback(drawFrame);
           };
-          drawFrame();
+          videoElement.requestVideoFrameCallback(drawFrame);
         });
       }
       
@@ -251,7 +280,7 @@ export default function ClipList({ clips, setClips, onPreview, aspectRatio, vide
                     className="text-lg font-semibold bg-transparent border-0 border-b-2 border-transparent focus:ring-0 focus:outline-none focus:border-primary p-1 h-auto font-headline"
                     />
                     <p className="text-sm text-muted-foreground font-mono">
-                    {formatTime(clip.start)} - {formatTime(clip.end)}
+                    {formatTime(clip.start)} - {formatTime(clip.end)} ({formatTime(clip.end - clip.start)})
                     </p>
                     <div className='flex flex-wrap gap-x-4 gap-y-2 text-xs text-muted-foreground items-center'>
                         {clip.cuts && clip.cuts.length > 0 ? (
@@ -267,8 +296,8 @@ export default function ClipList({ clips, setClips, onPreview, aspectRatio, vide
                 </div>
                 <div className="flex gap-2 flex-wrap">
                     <Button variant="outline" size="sm" onClick={() => onPreview(clip)}>
-                        <Play className="h-4 w-4 mr-2" />
-                        Preview
+                        { isPreviewing && activePreviewClipId === clip.id ? <Pause className="h-4 w-4 mr-2" /> : <Play className="h-4 w-4 mr-2" /> }
+                        { isPreviewing && activePreviewClipId === clip.id ? 'Stop' : 'Preview' }
                     </Button>
                     <Button variant="default" size="sm" onClick={() => exportClip(clip)}>
                         <Download className="h-4 w-4 mr-2" />
