@@ -180,15 +180,17 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
 
     try {
         const videoDurations = await Promise.all(
-            videoSources.map(source => new Promise<number>((resolve, reject) => {
+            videoSources.map(source => new Promise<number>((resolve) => {
                 const video = document.createElement('video');
                 video.preload = 'metadata';
                 video.onloadedmetadata = () => {
+                    URL.revokeObjectURL(video.src); // Clean up object URL
                     resolve(video.duration);
                 };
                 video.onerror = () => {
                     // Don't reject, just resolve with 0 so we can filter it out.
                     console.warn(`Could not load metadata for: ${source.file.name}`);
+                    URL.revokeObjectURL(video.src);
                     resolve(0);
                 };
                 video.src = URL.createObjectURL(source.file);
@@ -472,7 +474,3 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
     </div>
   );
 }
-
-
-
-    

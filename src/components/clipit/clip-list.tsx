@@ -78,13 +78,13 @@ export default function ClipList({ clips, setClips, onPreview, aspectRatio, vide
         await new Promise(res => firstVideoEl.onloadedmetadata = res);
 
         const [w, h] = aspectRatio.split(':').map(Number);
-        const targetAspectRatio = w/h;
         
         let canvasWidth = firstVideoEl.videoWidth;
         let canvasHeight = firstVideoEl.videoHeight;
 
         if (aspectRatio !== 'source') {
             const videoAspectRatio = firstVideoEl.videoWidth / firstVideoEl.videoHeight;
+            const targetAspectRatio = w/h;
             if (targetAspectRatio > videoAspectRatio) {
                 canvasHeight = Math.round(firstVideoEl.videoWidth / targetAspectRatio);
             } else {
