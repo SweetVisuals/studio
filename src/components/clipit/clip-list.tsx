@@ -1,7 +1,6 @@
-
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -18,7 +17,7 @@ import {
   DialogClose,
 } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
-import { Captions, Download, Play, Trash2, Loader2 } from 'lucide-react';
+import { Captions, Download, Play, Trash2, Loader2, Film, Ratio, AudioWaveform, VolumeX } from 'lucide-react';
 import type { Clip } from '@/app/page';
 import { useToast } from '@/hooks/use-toast';
 import { formatTime } from '@/lib/utils';
@@ -41,6 +40,17 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
 
   const { toast } = useToast();
 
+  useEffect(() => {
+    return () => {
+        // Clean up audio object URLs
+        clips.forEach(clip => {
+            if (clip.overlayAudioUrl) {
+                URL.revokeObjectURL(clip.overlayAudioUrl);
+            }
+        });
+    };
+  }, [clips]);
+
   const openCaptionEditor = (clip: Clip) => {
     setSelectedClip(clip);
     setEditableCaptions(clip.captions);
@@ -61,6 +71,10 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
   };
 
   const deleteClip = (id: number) => {
+    const clipToDelete = clips.find(c => c.id === id);
+    if(clipToDelete?.overlayAudioUrl) {
+        URL.revokeObjectURL(clipToDelete.overlayAudioUrl);
+    }
     setClips((prev) => prev.filter((c) => c.id !== id));
     toast({ title: 'Clip removed.'});
   };
@@ -80,11 +94,48 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
       const context = canvas.getContext('2d');
       if (!context) throw new Error('Could not get canvas context');
 
-      canvas.width = videoElement.videoWidth;
-      canvas.height = videoElement.videoHeight;
+      const [w, h] = clip.aspectRatio.split(':').map(Number);
+      const targetAspectRatio = w/h;
+      
+      let canvasWidth = videoElement.videoWidth;
+      let canvasHeight = videoElement.videoHeight;
 
-      const stream = canvas.captureStream(30);
-      const recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+      if (clip.aspectRatio !== 'source') {
+          const videoAspectRatio = videoElement.videoWidth / videoElement.videoHeight;
+          if (targetAspectRatio > videoAspectRatio) { // Target is wider
+              canvasHeight = Math.round(videoElement.videoWidth / targetAspectRatio);
+          } else { // Target is taller or same
+              canvasWidth = Math.round(videoElement.videoHeight * targetAspectRatio);
+          }
+      }
+      
+      canvas.width = canvasWidth;
+      canvas.height = canvasHeight;
+
+
+      let overlayAudio: HTMLAudioElement | null = null;
+      let combinedStream: MediaStream | null = null;
+
+      if(clip.overlayAudioUrl) {
+          overlayAudio = new Audio(clip.overlayAudioUrl);
+          overlayAudio.currentTime = 0;
+          
+          const audioContext = new AudioContext();
+          const audioDestination = audioContext.createMediaStreamDestination();
+          
+          const sourceNode = audioContext.createMediaElementSource(overlayAudio);
+          sourceNode.connect(audioDestination);
+          
+          const videoStream = canvas.captureStream(30);
+          combinedStream = new MediaStream([
+              ...videoStream.getVideoTracks(), 
+              ...audioDestination.stream.getAudioTracks()
+          ]);
+      }
+
+      const streamToRecord = combinedStream || canvas.captureStream(30);
+
+      const recorder = new MediaRecorder(streamToRecord, { mimeType: 'video/webm;codecs=vp9,opus' });
       const chunks: Blob[] = [];
 
       recorder.ondataavailable = (e) => chunks.push(e.data);
@@ -106,8 +157,8 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
       recorder.start();
 
       videoElement.currentTime = clip.start;
-      // Mute the video to prevent recording audio from the original track
-      videoElement.muted = true;
+      videoElement.muted = clip.isMuted;
+      if (overlayAudio) overlayAudio.play();
       await videoElement.play();
 
       const totalFrames = (clip.end - clip.start) * 30;
@@ -116,15 +167,42 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
       const drawFrame = () => {
         if (videoElement.currentTime >= clip.end || videoElement.paused) {
           videoElement.pause();
+          if (overlayAudio) overlayAudio.pause();
           recorder.stop();
-          // Unmute for normal playback
           videoElement.muted = false;
           return;
         }
-
-        context.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
         
-        // Draw captions
+        context.save();
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        
+        let filter = 'none';
+        if (clip.filter === 'bw') filter = 'grayscale(100%)';
+        if (clip.filter === 'night-vision') filter = 'grayscale(100%) brightness(1.5) contrast(1.5) sepia(20%) invert(10%)';
+        context.filter = filter;
+
+        // Calculate cropping
+        let sourceX = 0, sourceY = 0, sourceWidth = videoElement.videoWidth, sourceHeight = videoElement.videoHeight;
+        if(clip.aspectRatio !== 'source') {
+            sourceWidth = canvas.width;
+            sourceHeight = canvas.height;
+            sourceX = (videoElement.videoWidth - sourceWidth) / 2;
+            sourceY = (videoElement.videoHeight - sourceHeight) / 2;
+        }
+
+        context.drawImage(videoElement, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
+        context.filter = 'none';
+
+        if (clip.filter === 'vhs') {
+            context.fillStyle = 'rgba(0, 0, 0, 0.1)';
+            for (let i = 0; i < canvas.height; i += 4) {
+                context.fillRect(0, i, canvas.width, 2);
+            }
+            context.globalAlpha = 0.1 + Math.random() * 0.1;
+            context.drawImage(canvas, (Math.random()-0.5) * 10, (Math.random()-0.5) * 10);
+            context.globalAlpha = 1.0;
+        }
+        
         if (clip.captions) {
             const fontSize = Math.max(24, canvas.width / 30);
             context.font = `bold ${fontSize}px Poppins, sans-serif`;
@@ -135,6 +213,8 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
             context.fillText(clip.captions, canvas.width / 2, canvas.height - (fontSize * 1.5));
         }
 
+        context.restore();
+
         frameCount++;
         setExportProgress((frameCount / totalFrames) * 100);
         requestAnimationFrame(drawFrame);
@@ -144,7 +224,7 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
     } catch (error) {
       console.error('Export failed:', error);
       toast({ variant: 'destructive', title: 'Export failed', description: (error as Error).message });
-      videoElement.muted = false; // Ensure video is unmuted on error
+      if(videoElement) videoElement.muted = false;
       setExportingClipId(null);
     }
   };
@@ -153,6 +233,15 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
     return null;
   }
 
+  const getFilterName = (filter: string) => {
+    switch (filter) {
+      case 'bw': return 'B&W';
+      case 'night-vision': return 'Night Vision';
+      case 'vhs': return 'VHS';
+      default: return 'None';
+    }
+  };
+
   return (
     <div>
       <h2 className="font-headline text-2xl font-bold mb-4">Your Clips</h2>
@@ -160,7 +249,7 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
         {clips.map((clip) => (
           <Card key={clip.id} className="w-full transition-all duration-300">
             <CardContent className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div className="flex-1">
+              <div className="flex-1 space-y-2">
                 <Input
                   type="text"
                   value={clip.title}
@@ -173,9 +262,15 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
                   }
                   className="text-lg font-semibold bg-transparent border-0 border-b-2 border-transparent focus:ring-0 focus:outline-none focus:border-primary p-1 h-auto font-headline"
                 />
-                <p className="text-sm text-muted-foreground font-mono mt-1">
+                <p className="text-sm text-muted-foreground font-mono">
                   {formatTime(clip.start)} - {formatTime(clip.end)}
                 </p>
+                <div className='flex flex-wrap gap-2 text-xs text-muted-foreground items-center'>
+                    <span className="flex items-center gap-1"><Ratio className="size-3" /> {clip.aspectRatio}</span>
+                    <span className="flex items-center gap-1"><Film className="size-3" /> {getFilterName(clip.filter)}</span>
+                    {clip.overlayAudioUrl && <span className="flex items-center gap-1"><AudioWaveform className="size-3 text-accent" /> Custom Audio</span>}
+                    {clip.isMuted && <span className="flex items-center gap-1"><VolumeX className="size-3 text-destructive" /> Muted</span>}
+                </div>
               </div>
               {exportingClipId === clip.id ? (
                 <div className="w-full md:w-1/3">
@@ -190,8 +285,8 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
                   </Button>
                   <Button variant="outline" size="sm" onClick={() => openCaptionEditor(clip)}>
                     <Captions className="h-4 w-4 mr-2" />
-                    {clip.captions ? 'Edit Captions' : 'Captions'}
-                    {clip.captions === '' && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}
+                    {clip.captions ? 'Edit' : 'Add'} Captions
+                    {clip.captions === '' && !isCaptionDialogOpen && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}
                   </Button>
                   <Button
                     size="sm"
@@ -246,5 +341,3 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
     </div>
   );
 }
-
-    

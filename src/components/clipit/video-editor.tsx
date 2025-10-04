@@ -1,17 +1,24 @@
-
 'use client';
 
-import { useState, useRef, useEffect, type RefObject } from 'react';
+import { useState, useRef, useEffect, type RefObject, ChangeEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
-import { Plus, Play, Sparkles, Loader2, Download } from 'lucide-react';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Plus, Play, Sparkles, Loader2, Volume2, VolumeX, Upload } from 'lucide-react';
 import ClipList from './clip-list';
-import type { Clip } from '@/app/page';
+import type { Clip, VideoFilter, AspectRatio } from '@/app/page';
 import { formatTime } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
-import { generateCaptionsAction } from '@/app/actions';
+import { generateCaptionsAction, detectScenesAction } from '@/app/actions';
+import { cn } from '@/lib/utils';
 
 type VideoEditorProps = {
   videoUrl: string;
@@ -21,17 +28,25 @@ type VideoEditorProps = {
 export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-
   const [start, setStart] = useState(0);
   const [end, setEnd] = useState(15);
-
   const [clips, setClips] = useState<Clip[]>([]);
-  const [suggestedClips, setSuggestedClips] = useState<Omit<Clip, 'captions' | 'id'>[]>([]);
+  const [suggestedClips, setSuggestedClips] = useState<Omit<Clip, 'id' | 'captions'>[]>([]);
   const [isLoadingScenes, setIsLoadingScenes] = useState(false);
   const [activeClipForPreview, setActiveClipForPreview] = useState<Clip | null>(null);
 
+  const [filter, setFilter] = useState<VideoFilter>('none');
+  const [aspectRatio, setAspectRatio] = useState<AspectRatio>('9:16');
+  const [overlayAudioFile, setOverlayAudioFile] = useState<File | null>(null);
+  const [overlayAudioUrl, setOverlayAudioUrl] = useState<string | null>(null);
+  const [isMuted, setIsMuted] = useState(false);
+
   const playIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const overlayAudioRef = useRef<HTMLAudioElement>(null);
+  const audioInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+  
+  const videoWrapperRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -45,6 +60,7 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
       setCurrentTime(video.currentTime);
       if (activeClipForPreview && video.currentTime >= activeClipForPreview.end) {
         video.pause();
+        if(overlayAudioRef.current) overlayAudioRef.current.pause();
       }
     };
     
@@ -54,11 +70,10 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
     return () => {
       video.removeEventListener('loadedmetadata', handleLoadedMetadata);
       video.removeEventListener('timeupdate', handleTimeUpdate);
-      if (playIntervalRef.current) {
-        clearInterval(playIntervalRef.current);
-      }
+      if (playIntervalRef.current) clearInterval(playIntervalRef.current);
+      if (overlayAudioUrl) URL.revokeObjectURL(overlayAudioUrl);
     };
-  }, [videoRef, activeClipForPreview]);
+  }, [videoRef, activeClipForPreview, overlayAudioUrl]);
 
   const handleSeek = (event: React.ChangeEvent<HTMLInputElement>) => {
     const time = parseFloat(event.target.value);
@@ -68,57 +83,70 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
     }
   };
 
-  const playClip = (clip: { start: number; end: number, captions?: string }) => {
+  const playClip = (clip: Clip) => {
     const video = videoRef.current;
     if (!video) return;
 
-    // A bit of a hack to tie preview to a clip for captions
-    const tempClip: Clip = {
-        id: -1, 
-        start: clip.start, 
-        end: clip.end, 
-        title: 'Preview',
-        captions: clip.captions || ''
-    };
-    setActiveClipForPreview(tempClip);
+    setActiveClipForPreview(clip);
 
     video.currentTime = clip.start;
+    video.muted = clip.isMuted;
     video.play();
-
-    if (playIntervalRef.current) {
-      clearInterval(playIntervalRef.current);
+    
+    if (overlayAudioRef.current && clip.overlayAudioUrl) {
+        if(overlayAudioRef.current.src !== clip.overlayAudioUrl){
+            overlayAudioRef.current.src = clip.overlayAudioUrl;
+        }
+        overlayAudioRef.current.currentTime = 0;
+        overlayAudioRef.current.play();
     }
+
+    if (playIntervalRef.current) clearInterval(playIntervalRef.current);
 
     playIntervalRef.current = setInterval(() => {
       if (video.currentTime >= clip.end) {
         video.pause();
+        if(overlayAudioRef.current) overlayAudioRef.current.pause();
         if (playIntervalRef.current) clearInterval(playIntervalRef.current);
         setActiveClipForPreview(null);
+        video.muted = false;
       }
     }, 100);
   };
+
+  const handlePreviewCurrentSelection = () => {
+    const tempClip: Clip = {
+        id: -1, 
+        start: start, 
+        end: end, 
+        title: 'Preview',
+        captions: 'Sample Captions',
+        filter: filter,
+        aspectRatio: aspectRatio,
+        isMuted: isMuted,
+        overlayAudioUrl: overlayAudioUrl || undefined,
+    };
+    playClip(tempClip);
+  }
   
   const detectScenes = async () => {
     setIsLoadingScenes(true);
     toast({ title: 'AI Processing', description: 'Detecting potential clips in your video...' });
     
     try {
-        const videoDuration = videoRef.current?.duration || 0;
-        if (videoDuration === 0) {
-            toast({
-                variant: 'destructive',
-                title: 'Video Not Loaded',
-                description: 'Could not get video duration.',
-            });
-            return;
-        }
+        if (!videoRef.current) throw new Error("Video element not available");
 
-        await new Promise(resolve => setTimeout(resolve, 1500));
+        const videoDuration = videoRef.current.duration;
+        const videoDataUri = 'data:video/mp4;base64,'; // Dummy data for now
         
-        const newSuggestions: Omit<Clip, 'captions'|'id'>[] = [];
+        const { sceneTimestamps } = await detectScenesAction({ videoDataUri });
+
+        const newSuggestions: Omit<Clip, 'id'|'captions'>[] = [];
         const numSuggestions = 8; 
         const minClipDuration = 10;
         const maxClipDuration = 45;
+        const filters: VideoFilter[] = ['none', 'bw', 'vhs', 'night-vision'];
+        const aspectRatios: AspectRatio[] = ['9:16', '1:1', '16:9'];
 
         for (let i = 0; i < numSuggestions; i++) {
             const clipDuration = Math.random() * (maxClipDuration - minClipDuration) + minClipDuration;
@@ -128,7 +156,10 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
             newSuggestions.push({
                 start: clipStart,
                 end: clipEnd,
-                title: `AI Clip ${newSuggestions.length + 1}`,
+                title: `AI Clip ${i + 1}`,
+                filter: filters[Math.floor(Math.random() * filters.length)],
+                aspectRatio: aspectRatios[Math.floor(Math.random() * aspectRatios.length)],
+                isMuted: Math.random() > 0.7,
             });
         }
         
@@ -140,6 +171,7 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
             title: 'Scene Detection Failed',
             description: 'Could not detect scenes. Please try again.',
         });
+        console.error(error);
     } finally {
         setIsLoadingScenes(false);
     }
@@ -147,11 +179,7 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
 
   const addClip = async () => {
     if (end <= start) {
-        toast({
-            variant: 'destructive',
-            title: 'Invalid Time Range',
-            description: 'End time must be after start time.',
-        });
+        toast({ variant: 'destructive', title: 'Invalid Time Range', description: 'End time must be after start time.'});
         return;
     }
     const id = Date.now();
@@ -160,35 +188,38 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
       start,
       end,
       title: `My Clip ${clips.length + 1}`,
-      captions: '', // Initially empty
+      captions: '',
+      filter,
+      aspectRatio,
+      isMuted,
+      overlayAudioUrl: overlayAudioUrl || undefined,
     };
     setClips((prev) => [newClip, ...prev]);
     toast({ title: 'Clip Added', description: `"${newClip.title}" was added. Generating captions...` });
 
-    // Auto-generate captions
+    // Reset audio for next clip
+    setOverlayAudioFile(null);
+    setOverlayAudioUrl(null);
+    if(audioInputRef.current) audioInputRef.current.value = "";
+
     try {
-        const dummyAudioDataUri = 'data:audio/wav;base64,'; // Placeholder
+        const dummyAudioDataUri = 'data:audio/wav;base64,'; 
         const result = await generateCaptionsAction({ audioDataUri: dummyAudioDataUri });
-        setClips((prev) =>
-          prev.map((c) => (c.id === id ? { ...c, captions: result.captions } : c))
-        );
-        toast({
-            title: 'Captions Ready!',
-            description: `AI captions for "${newClip.title}" are complete.`,
-        });
+        setClips((prev) => prev.map((c) => (c.id === id ? { ...c, captions: result.captions } : c)));
+        toast({ title: 'Captions Ready!', description: `AI captions for "${newClip.title}" are complete.`});
     } catch (error) {
         console.error('Auto-caption failed for', newClip.title, error);
-        toast({
-            variant: 'destructive',
-            title: 'Caption Failed',
-            description: 'Could not generate AI captions for the clip.',
-        });
+        toast({ variant: 'destructive', title: 'Caption Failed', description: 'Could not generate AI captions for the clip.' });
     }
   };
 
-  const handleSelectClip = (clip: { start: number; end: number }) => {
+  const handleSelectClip = (clip: Omit<Clip, 'id'|'captions'>) => {
     setStart(clip.start);
     setEnd(clip.end);
+    setFilter(clip.filter);
+    setAspectRatio(clip.aspectRatio);
+    setIsMuted(clip.isMuted);
+    setOverlayAudioUrl(clip.overlayAudioUrl || null);
     if (videoRef.current) {
       videoRef.current.currentTime = clip.start;
       videoRef.current.pause();
@@ -196,21 +227,53 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
     setActiveClipForPreview(null);
   };
   
+  const handleAudioUpload = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setOverlayAudioFile(file);
+      const url = URL.createObjectURL(file);
+      setOverlayAudioUrl(url);
+      toast({title: 'Audio Added', description: `Added ${file.name}`})
+    }
+  };
+
+  const vhsClass = "after:content-[''] after:absolute after:top-0 after:left-0 after:w-full after:h-full after:bg-[rgba(0,0,0,0.1)] after:z-10 after:pointer-events-none after:animate-vhs-scanlines";
+  const getFilterClass = (f: VideoFilter) => {
+    switch(f) {
+      case 'bw': return 'grayscale';
+      case 'night-vision': return 'grayscale brightness-150 contrast-150 sepia-[.2] invert-[.1]';
+      case 'vhs': return 'vhs-filter';
+      default: return '';
+    }
+  };
+
+  const getAspectRatioClass = (ar: AspectRatio) => {
+    switch(ar) {
+        case '9:16': return 'aspect-[9/16]';
+        case '1:1': return 'aspect-square';
+        case '16:9': return 'aspect-[16/9]';
+        default: return 'aspect-video';
+    }
+  };
+
   return (
     <div className="space-y-8">
       <Card>
         <CardContent className="p-2 md:p-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="md:col-span-2 space-y-4">
-               <div className="aspect-video w-full overflow-hidden rounded-lg bg-black relative">
-                  <video ref={videoRef} src={videoUrl} className="h-full w-full" controls crossOrigin="anonymous"/>
-                   {activeClipForPreview && activeClipForPreview.captions && (
-                     <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-full px-4 text-center">
-                       <p className="py-2 px-4 text-lg md:text-xl font-bold text-white bg-black/60 rounded-md inline">
-                         {activeClipForPreview.captions}
-                       </p>
-                     </div>
-                   )}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2 space-y-4">
+               <div ref={videoWrapperRef} className={cn("w-full mx-auto bg-black rounded-lg overflow-hidden transition-all duration-300", getAspectRatioClass(activeClipForPreview?.aspectRatio ?? aspectRatio))}>
+                  <div className={cn("relative w-full h-full", getFilterClass(activeClipForPreview?.filter ?? filter))}>
+                    <video ref={videoRef} src={videoUrl} className="h-full w-full object-cover" controls={false} crossOrigin="anonymous" playsInline/>
+                    {activeClipForPreview?.filter === 'vhs' && <div className="vhs-overlay"></div>}
+                    {activeClipForPreview && activeClipForPreview.captions && (
+                      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-full px-4 text-center z-20">
+                        <p className="py-2 px-4 text-lg md:text-xl font-bold text-white bg-black/60 rounded-md inline">
+                          {activeClipForPreview.captions}
+                        </p>
+                      </div>
+                    )}
+                  </div>
                </div>
                <div className="space-y-2">
                  <input
@@ -229,7 +292,7 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
                </div>
             </div>
 
-            <div className="md:col-span-1 space-y-4">
+            <div className="lg:col-span-1 space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
                         <Label htmlFor="start-time">Start (s)</Label>
@@ -240,7 +303,42 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
                         <Input id="end-time" type="number" value={end.toFixed(2)} onChange={(e) => setEnd(parseFloat(e.target.value) || 0)} step="0.1" min={start} max={duration}/>
                     </div>
                 </div>
-                 <Button onClick={() => playClip({ start, end })} className="w-full bg-accent hover:bg-accent/90">
+                <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                        <Label htmlFor="aspect-ratio">Aspect Ratio</Label>
+                        <Select value={aspectRatio} onValueChange={(v) => setAspectRatio(v as AspectRatio)}>
+                          <SelectTrigger id="aspect-ratio"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="source">Source</SelectItem>
+                            <SelectItem value="9:16">9:16 (Vertical)</SelectItem>
+                            <SelectItem value="1:1">1:1 (Square)</SelectItem>
+                            <SelectItem value="16:9">16:9 (Landscape)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="space-y-1">
+                        <Label htmlFor="filter">Filter</Label>
+                        <Select value={filter} onValueChange={(v) => setFilter(v as VideoFilter)}>
+                          <SelectTrigger id="filter"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">None</SelectItem>
+                            <SelectItem value="bw">Black & White</SelectItem>
+                            <SelectItem value="night-vision">Night Vision</SelectItem>
+                            <SelectItem value="vhs">VHS</SelectItem>
+                          </SelectContent>
+                        </Select>
+                    </div>
+                </div>
+                <div className="flex items-center gap-2">
+                    <Button onClick={() => audioInputRef.current?.click()} variant="outline" className="w-full">
+                        <Upload /> Upload Audio
+                    </Button>
+                    <input type="file" accept='audio/*' ref={audioInputRef} onChange={handleAudioUpload} className='sr-only'/>
+                    <Button variant="outline" size="icon" onClick={() => setIsMuted(!isMuted)}>
+                        {isMuted ? <VolumeX className='text-destructive'/> : <Volume2 />}
+                    </Button>
+                </div>
+                 <Button onClick={handlePreviewCurrentSelection} className="w-full bg-accent hover:bg-accent/90">
                    <Play /> Preview Clip
                  </Button>
                  <Button onClick={addClip} className="w-full">
@@ -254,6 +352,8 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
           </div>
         </CardContent>
       </Card>
+      
+      <audio ref={overlayAudioRef} className='hidden' />
 
       {suggestedClips.length > 0 && (
         <div>
@@ -281,5 +381,3 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
     </div>
   );
 }
-
-    

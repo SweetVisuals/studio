@@ -5,12 +5,19 @@ import Header from '@/components/clipit/header';
 import VideoUploader from '@/components/clipit/video-uploader';
 import VideoEditor from '@/components/clipit/video-editor';
 
+export type VideoFilter = 'none' | 'bw' | 'night-vision' | 'vhs';
+export type AspectRatio = '9:16' | '1:1' | '16:9' | 'source';
+
 export type Clip = {
   id: number;
   start: number;
   end: number;
   title: string;
   captions: string;
+  filter: VideoFilter;
+  aspectRatio: AspectRatio;
+  overlayAudioUrl?: string;
+  isMuted: boolean;
 };
 
 export default function Home() {
@@ -40,7 +47,7 @@ export default function Home() {
     <div className="flex min-h-screen w-full flex-col bg-background">
       <Header />
       <main className="flex-1 px-4 py-8 md:px-6">
-        <div className="mx-auto max-w-6xl">
+        <div className="mx-auto max-w-7xl">
           {!videoUrl ? (
             <VideoUploader onVideoUpload={handleVideoUpload} />
           ) : (
