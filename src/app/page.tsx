@@ -53,7 +53,7 @@ export default function Home() {
           {videoSources.length === 0 ? (
             <VideoUploader onVideoUpload={handleVideoUpload} multiple />
           ) : (
-            <VideoEditor videoSources={videoSources} />
+            <VideoEditor videoSources={videoSources} onVideoUpload={handleVideoUpload} />
           )}
         </div>
       </main>

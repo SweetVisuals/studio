@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, Play, Sparkles, Loader2, Volume2, VolumeX, Upload, Music4, Film } from 'lucide-react';
+import { Plus, Play, Sparkles, Loader2, Volume2, VolumeX, Upload, Music4, Film, UploadCloud } from 'lucide-react';
 import ClipList from './clip-list';
 import type { Clip, VideoFilter, AspectRatio, VideoSource } from '@/app/page';
 import { formatTime } from '@/lib/utils';
@@ -23,6 +23,7 @@ import { detectSceneChanges } from '@/ai/ai-scene-detection';
 
 type VideoEditorProps = {
   videoSources: VideoSource[];
+  onVideoUpload: (event: ChangeEvent<HTMLInputElement>) => void;
 };
 
 const filterOptions: { id: VideoFilter, label: string }[] = [
@@ -31,7 +32,7 @@ const filterOptions: { id: VideoFilter, label: string }[] = [
     { id: 'vhs', label: 'VHS' },
 ];
 
-export default function VideoEditor({ videoSources }: VideoEditorProps) {
+export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditorProps) {
   const [activeVideoIndex, setActiveVideoIndex] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -51,13 +52,14 @@ export default function VideoEditor({ videoSources }: VideoEditorProps) {
   const playIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const overlayAudioRef = useRef<HTMLAudioElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
+  const moreVideoInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   
   const videoWrapperRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || !videoSources[activeVideoIndex]) return;
 
     // When active video index changes, load new source
     video.src = videoSources[activeVideoIndex].url;
@@ -92,7 +94,10 @@ export default function VideoEditor({ videoSources }: VideoEditorProps) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
+      reader.onerror = (error) => {
+        console.error("Error reading video file", error);
+        reject(new Error("Error reading video file"));
+      };
       reader.readAsDataURL(file);
     });
   };
@@ -102,6 +107,9 @@ export default function VideoEditor({ videoSources }: VideoEditorProps) {
     toast({ title: 'AI Processing', description: 'Detecting scenes in the video...' });
     
     try {
+      if (!videoSources[activeVideoIndex]) {
+        throw new Error("No video source selected");
+      }
       const videoFile = videoSources[activeVideoIndex].file;
       const videoDataUri = await fileToDataUri(videoFile);
         
@@ -352,7 +360,7 @@ export default function VideoEditor({ videoSources }: VideoEditorProps) {
         <CardContent className="p-2 md:p-4">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 space-y-4">
-                <div className="flex gap-2 flex-wrap">
+                <div className="flex gap-2 flex-wrap items-center">
                     {videoSources.map((source, index) => (
                         <Button 
                             key={index} 
@@ -363,6 +371,22 @@ export default function VideoEditor({ videoSources }: VideoEditorProps) {
                             Source {index + 1}
                         </Button>
                     ))}
+                     <Button 
+                        variant="outline"
+                        onClick={() => moreVideoInputRef.current?.click()}
+                    >
+                        <UploadCloud className="mr-2"/>
+                        Upload More
+                    </Button>
+                    <input
+                      id="video-upload-more"
+                      type="file"
+                      className="sr-only"
+                      accept="video/mp4,video/quicktime,video/webm"
+                      onChange={onVideoUpload}
+                      multiple
+                      ref={moreVideoInputRef}
+                    />
                 </div>
                <div ref={videoWrapperRef} className={cn("w-full mx-auto bg-black rounded-lg overflow-hidden transition-all duration-300", getAspectRatioClass(aspectRatio))}>
                   <div className={cn("relative w-full h-full", getFilterClass(activeFilters))}>
