@@ -99,18 +99,17 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
   const playClip = async (clip: Clip) => {
     const video = videoRef.current;
     if (!video) return;
-    
+
     // Stop any current playback
     video.pause();
-    if(overlayAudioRef.current) overlayAudioRef.current.pause();
-    if (playIntervalRef.current) clearInterval(playIntervalRef.current);
+    if (overlayAudioRef.current) overlayAudioRef.current.pause();
 
-    // Set active clip to apply filters BEFORE playback
+    // Set active clip to apply filters BEFORE playback starts
     setActiveClipForPreview(clip);
 
-    const setupAndPlay = () => {
-      video.currentTime = clip.start;
-      video.muted = clip.isMuted;
+    const setupAndPlay = (targetVideo: HTMLVideoElement) => {
+      targetVideo.currentTime = clip.start;
+      targetVideo.muted = clip.isMuted;
       
       const audioEl = overlayAudioRef.current;
       if (audioEl && clip.overlayAudioUrl) {
@@ -121,7 +120,7 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
           audioEl.currentTime = 0;
       }
       
-      const playPromise = video.play();
+      const playPromise = targetVideo.play();
       if(playPromise !== undefined) {
         playPromise.then(() => {
           if(audioEl && clip.overlayAudioUrl) audioEl.play();
@@ -134,27 +133,29 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
     };
 
     if (activeVideoIndex !== clip.sourceVideo) {
-      // Need to switch video source
+      // If the source is different, update the state to trigger the useEffect
       setActiveVideoIndex(clip.sourceVideo);
-      // Wait for React to re-render with the new activeVideoIndex, which triggers the useEffect to change the src
-      // A small timeout allows the DOM to update.
+      
+      // We need to wait for the video element's src to be updated by the useEffect.
+      // A small timeout is a pragmatic way to wait for the DOM update.
       setTimeout(() => {
-        const newVideo = videoRef.current;
-        if(newVideo) {
-          const onCanPlay = () => {
-            setupAndPlay();
-            newVideo.removeEventListener('canplay', onCanPlay);
-          }
-          if(newVideo.readyState >= 3) { // HAVE_FUTURE_DATA
-            onCanPlay();
-          } else {
-            newVideo.addEventListener('canplay', onCanPlay);
-          }
+        const newVideoEl = videoRef.current;
+        if (newVideoEl) {
+            // Check if video is ready, otherwise wait for the `canplay` event
+            if (newVideoEl.readyState >= 3) {
+                setupAndPlay(newVideoEl);
+            } else {
+                const onCanPlay = () => {
+                    setupAndPlay(newVideoEl);
+                    newVideoEl.removeEventListener('canplay', onCanPlay);
+                };
+                newVideoEl.addEventListener('canplay', onCanPlay);
+            }
         }
-      }, 50);
+      }, 100); 
     } else {
-      // Already on the correct video source
-      setupAndPlay();
+      // Already on the correct video source, just play it
+      setupAndPlay(video);
     }
   };
 
@@ -183,12 +184,12 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
                 const video = document.createElement('video');
                 video.preload = 'metadata';
                 video.onloadedmetadata = () => {
-                    URL.revokeObjectURL(video.src);
                     resolve(video.duration);
                 };
                 video.onerror = () => {
-                    URL.revokeObjectURL(video.src);
-                    reject(new Error(`Could not load video: ${source.file.name}`));
+                    // Don't reject, just resolve with 0 so we can filter it out.
+                    console.warn(`Could not load metadata for: ${source.file.name}`);
+                    resolve(0);
                 };
                 video.src = URL.createObjectURL(source.file);
             }))
@@ -229,7 +230,7 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
             currentVideoIndex++;
         }
         
-        setClips(prev => [...newClips, ...prev]);
+        setClips(prev => [...prev, ...newClips]);
         toast({ title: 'AI Complete', description: `${newClips.length} cuts created for your multi-cam edit.` });
     } catch (error) {
         toast({
