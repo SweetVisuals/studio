@@ -8,6 +8,12 @@ import VideoEditor from '@/components/clipit/video-editor';
 export type VideoFilter = 'none' | 'bw' | 'night-vision' | 'vhs';
 export type AspectRatio = '9:16' | '1:1' | '16:9' | 'source';
 
+export type ClipCut = {
+  sourceVideo: number;
+  start: number;
+  end: number;
+};
+
 export type Clip = {
   id: number;
   start: number;
@@ -16,7 +22,8 @@ export type Clip = {
   filters: VideoFilter[];
   overlayAudioUrl?: string;
   isMuted: boolean;
-  sourceVideo: number; // Index of the video in the videoUrls array
+  sourceVideo: number; // Index of the video in the videoUrls array. -1 for multi-cut clips
+  cuts?: ClipCut[]; // Optional array for multi-cut sequences
 };
 
 export type VideoSource = {
