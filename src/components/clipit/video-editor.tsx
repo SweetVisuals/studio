@@ -212,39 +212,37 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
   const createMultiCamEdit = async () => {
     setIsLoading(true);
     toast({ title: 'AI Processing', description: 'Generating multi-cam edit...' });
-    
-    // This is a temporary workaround to get durations.
-    // A more robust solution would be to use a library like `ffprobe` on the server
-    // or have the user input durations if they are not available.
-    const videoDurations = await Promise.all(
-        videoSources.map(source => new Promise<number>((resolve) => {
-            const video = document.createElement('video');
-            video.preload = 'metadata';
-            video.onloadedmetadata = () => {
-                resolve(video.duration);
-            };
-            video.onerror = () => {
-                console.warn(`Could not load metadata for ${source.file.name}. Defaulting duration to 300s.`);
-                resolve(300); // Fallback duration
-            };
-            video.src = source.url;
-        }))
-    );
 
     try {
-        const newClips: Clip[] = [];
-        let currentVideoIndex = 0;
-        const clipDuration = 3;
-        let totalTime = 0;
+        const videoDurations = await Promise.all(
+            videoSources.map(source => new Promise<number>((resolve) => {
+                const video = document.createElement('video');
+                video.preload = 'metadata';
+                video.onloadedmetadata = () => {
+                    URL.revokeObjectURL(video.src); 
+                    resolve(video.duration);
+                };
+                video.onerror = () => {
+                    console.warn(`Could not load metadata for ${source.file.name}. Defaulting duration to a large value.`);
+                    URL.revokeObjectURL(video.src); 
+                    resolve(3600); // Fallback duration 1 hour
+                };
+                video.src = URL.createObjectURL(source.file);
+            }))
+        );
 
-        // Aim for a total ~60 second video
-        while(totalTime < 60 && newClips.length < 30) { 
+        const newClips: Clip[] = [];
+        const clipDuration = 3;
+        let currentVideoIndex = 0;
+
+        for (let i = 0; i < 25; i++) {
             const sourceDuration = videoDurations[currentVideoIndex];
             
-            if (sourceDuration <= clipDuration) {
-                currentVideoIndex = (currentVideoIndex + 1) % videoSources.length;
-                if (newClips.length === 0 && Array.from({length: videoSources.length}).every((_, i) => videoDurations[i] <= clipDuration)) break; // prevent infinite loop
-                continue;
+            // Ensure we can actually make a clip of this duration
+            if (sourceDuration < clipDuration) {
+                 toast({ variant: 'destructive', title: 'Video too short', description: `Source ${currentVideoIndex+1} is shorter than ${clipDuration}s.`});
+                 currentVideoIndex = (currentVideoIndex + 1) % videoSources.length;
+                 continue; // Skip to next video
             }
             
             const startTime = Math.random() * (sourceDuration - clipDuration);
@@ -260,13 +258,11 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
                 sourceVideo: currentVideoIndex,
             });
 
-            totalTime += clipDuration;
             currentVideoIndex = (currentVideoIndex + 1) % videoSources.length;
         }
         
-        setClips(newClips);
+        setClips(prev => [...newClips, ...prev]);
         toast({ title: 'AI Complete', description: `${newClips.length} cuts created for your multi-cam edit.` });
-
     } catch (error) {
         toast({
             variant: 'destructive',
