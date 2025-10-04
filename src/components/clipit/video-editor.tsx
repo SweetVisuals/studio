@@ -133,7 +133,7 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
         toast({
             variant: 'destructive',
             title: 'AI Scene Detection Failed',
-            description: 'Could not process video. Please try again.',
+            description: (error as Error).message || 'Could not process video. Please try again.',
         });
         console.error(error);
     } finally {
@@ -215,27 +215,33 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
     
     try {
         const videoDurations = await Promise.all(
-            videoSources.map(source => new Promise<number>(resolve => {
+            videoSources.map(source => new Promise<number>((resolve, reject) => {
                 const video = document.createElement('video');
+                video.preload = 'metadata';
                 video.onloadedmetadata = () => resolve(video.duration);
+                video.onerror = () => reject(new Error(`Could not load video: ${source.file.name}`));
                 video.src = source.url;
             }))
         );
 
         const newClips: Clip[] = [];
         let currentVideoIndex = 0;
-        const clipDuration = 3; // 3 seconds per clip
+        const clipDuration = 3;
         let totalTime = 0;
 
         // Aim for a total ~60 second video
         while(totalTime < 60 && newClips.length < 30) { 
             const sourceDuration = videoDurations[currentVideoIndex];
             
-            // Avoid starting too close to the end
+            if (sourceDuration <= clipDuration) {
+                // Skip this video if it's shorter than the clip duration
+                currentVideoIndex = (currentVideoIndex + 1) % videoSources.length;
+                if (currentVideoIndex === 0) break; // Avoid infinite loop if all videos are too short
+                continue;
+            }
+            
             const startTime = Math.random() * (sourceDuration - clipDuration);
             const endTime = startTime + clipDuration;
-
-            if (startTime < 0 || endTime > sourceDuration) continue;
 
             newClips.push({
                 id: Date.now() + Math.random(),
@@ -253,14 +259,13 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
         }
         
         setClips(newClips);
-
         toast({ title: 'AI Complete', description: `${newClips.length} cuts created for your multi-cam edit.` });
 
     } catch (error) {
         toast({
             variant: 'destructive',
             title: 'Multi-cam Edit Failed',
-            description: 'Could not generate clips. Please try again.',
+            description: (error as Error).message || 'Could not generate clips. Please try again.',
         });
         console.error(error);
     } finally {
