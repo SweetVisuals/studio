@@ -28,21 +28,29 @@ export default function ClipList({ clips, setClips, onPreview, aspectRatio, vide
   const { toast } = useToast();
 
   useEffect(() => {
+    // This effect is to revoke Object URLs to prevent memory leaks.
     return () => {
-        clips.forEach(clip => {
-            if (clip.overlayAudioUrl) {
-                URL.revokeObjectURL(clip.overlayAudioUrl);
-            }
+        const audioUrls = new Set(clips.map(c => c.overlayAudioUrl));
+        audioUrls.forEach(url => {
+            if(url) URL.revokeObjectURL(url);
         });
     };
   }, [clips]);
 
   const deleteClip = (id: number) => {
-    const clipToDelete = clips.find(c => c.id === id);
-    if(clipToDelete?.overlayAudioUrl) {
-        URL.revokeObjectURL(clipToDelete.overlayAudioUrl);
-    }
-    setClips((prev) => prev.filter((c) => c.id !== id));
+    setClips((prev) => {
+        const clipToDelete = prev.find(c => c.id === id);
+        const remainingClips = prev.filter((c) => c.id !== id);
+
+        // Check if the audio URL from the deleted clip is still used by other clips
+        if (clipToDelete?.overlayAudioUrl) {
+            const isAudioUrlStillInUse = remainingClips.some(c => c.overlayAudioUrl === clipToDelete.overlayAudioUrl);
+            if (!isAudioUrlStillInUse) {
+                URL.revokeObjectURL(clipToDelete.overlayAudioUrl);
+            }
+        }
+        return remainingClips;
+    });
     toast({ title: 'Clip removed.'});
   };
 
@@ -72,40 +80,44 @@ export default function ClipList({ clips, setClips, onPreview, aspectRatio, vide
         const context = canvas.getContext('2d', { willReadFrequently: true });
         if (!context) throw new Error('Could not get canvas context');
 
-        // Assuming all videos have similar dimensions, use the first one for setup
-        const firstVideoEl = document.createElement('video');
-        firstVideoEl.src = videoSources[0].url;
-        await new Promise(res => firstVideoEl.onloadedmetadata = res);
-
-        const [w, h] = aspectRatio.split(':').map(Number);
+        // Determine canvas dimensions from the first video and aspect ratio
+        const firstVidSource = videoSources[clips[0].sourceVideo];
+        const tempVideo = document.createElement('video');
+        tempVideo.src = firstVidSource.url;
+        await new Promise(res => tempVideo.onloadedmetadata = res);
         
-        let canvasWidth = firstVideoEl.videoWidth;
-        let canvasHeight = firstVideoEl.videoHeight;
-
+        const videoAspectRatio = tempVideo.videoWidth / tempVideo.videoHeight;
+        let canvasWidth = tempVideo.videoWidth;
+        let canvasHeight = tempVideo.videoHeight;
+        
         if (aspectRatio !== 'source') {
-            const videoAspectRatio = firstVideoEl.videoWidth / firstVideoEl.videoHeight;
+            const [w, h] = aspectRatio.split(':').map(Number);
             const targetAspectRatio = w/h;
-            if (targetAspectRatio > videoAspectRatio) {
-                canvasHeight = Math.round(firstVideoEl.videoWidth / targetAspectRatio);
-            } else {
-                canvasWidth = Math.round(firstVideoEl.videoHeight * targetAspectRatio);
+            
+            // Letterbox/Pillarbox logic
+            if (targetAspectRatio > videoAspectRatio) { // Target is wider
+                canvasHeight = Math.round(canvasWidth / targetAspectRatio);
+            } else { // Target is taller
+                canvasWidth = Math.round(canvasHeight * targetAspectRatio);
             }
         }
         
         canvas.width = canvasWidth;
         canvas.height = canvasHeight;
 
+        // Setup streams
         const audioContext = new AudioContext();
+        const mainAudioDestination = audioContext.createMediaStreamDestination();
+        
         const canvasStream = canvas.captureStream(30);
-        const videoTracks = canvasStream.getVideoTracks();
-        const audioDestination = audioContext.createMediaStreamDestination();
-        const audioTracks = audioDestination.stream.getAudioTracks();
-
-        const combinedStream = new MediaStream([...videoTracks, ...audioTracks]);
+        const videoTrack = canvasStream.getVideoTracks()[0];
+        const audioTrack = mainAudioDestination.stream.getAudioTracks()[0];
+        
+        const combinedStream = new MediaStream([videoTrack, audioTrack]);
         const recorder = new MediaRecorder(combinedStream, { mimeType: 'video/webm;codecs=vp9,opus' });
+        
         const chunks: Blob[] = [];
-
-        recorder.ondataavailable = (e) => chunks.push(e.data);
+        recorder.ondataavailable = (e) => e.data.size > 0 && chunks.push(e.data);
         recorder.onstop = () => {
             const blob = new Blob(chunks, { type: 'video/webm' });
             const url = URL.createObjectURL(blob);
@@ -123,67 +135,85 @@ export default function ClipList({ clips, setClips, onPreview, aspectRatio, vide
         };
 
         recorder.start();
-
+        
+        // Prepare all video elements
         const videoElements = await Promise.all(videoSources.map(source => {
             const video = document.createElement('video');
             video.src = source.url;
             video.crossOrigin = 'anonymous';
-            video.muted = true;
+            video.muted = true; // All video elements should be muted
             return new Promise<HTMLVideoElement>(res => {
                 video.onloadedmetadata = () => res(video);
             });
         }));
 
-        let totalFrames = 0;
-        for (const clip of clips) {
-            totalFrames += (clip.end - clip.start) * 30;
+        // Handle the main audio track
+        if (clips[0].overlayAudioUrl) {
+            const mainAudioElement = new Audio(clips[0].overlayAudioUrl);
+            mainAudioElement.crossOrigin = "anonymous";
+            await mainAudioElement.load();
+            const mainAudioSourceNode = audioContext.createMediaElementSource(mainAudioElement);
+            mainAudioSourceNode.connect(mainAudioDestination);
+            mainAudioElement.play();
         }
+
+        const totalFrames = clips.reduce((acc, clip) => acc + ((clip.end - clip.start) * 30), 0);
         let framesProcessed = 0;
 
         for (const clip of clips) {
             const videoElement = videoElements[clip.sourceVideo];
             videoElement.currentTime = clip.start;
             await videoElement.play();
-
-            if (!clip.isMuted) {
-                const sourceNode = audioContext.createMediaElementSource(videoElement);
-                sourceNode.connect(audioDestination);
-            }
-
-            let overlayAudioElement: HTMLAudioElement | null = null;
-            if (clip.overlayAudioUrl) {
-                overlayAudioElement = new Audio(clip.overlayAudioUrl);
-                overlayAudioElement.crossOrigin = "anonymous";
-                await overlayAudioElement.load();
-                overlayAudioElement.currentTime = 0;
-                overlayAudioElement.play();
-                const overlaySourceNode = audioContext.createMediaElementSource(overlayAudioElement);
-                overlaySourceNode.connect(audioDestination);
+            
+            // If individual clips have audio and are not muted, connect them.
+            // This is for sound effects, etc. The main audio is already playing.
+            if (!clip.isMuted && clip.overlayAudioUrl !== clips[0].overlayAudioUrl) {
+                const sfxAudio = new Audio(clip.overlayAudioUrl);
+                sfxAudio.crossOrigin = 'anonymous';
+                await sfxAudio.load();
+                const sfxSource = audioContext.createMediaElementSource(sfxAudio);
+                sfxSource.connect(mainAudioDestination);
+                sfxAudio.play();
             }
 
             await new Promise<void>(resolve => {
                 const drawFrame = () => {
                     if (videoElement.currentTime >= clip.end) {
                         videoElement.pause();
-                        if (overlayAudioElement) overlayAudioElement.pause();
                         resolve();
                         return;
                     }
+
                     context.save();
                     context.clearRect(0, 0, canvas.width, canvas.height);
-                    context.filter = getFilterString(clip.filters);
-                    let sourceX = 0, sourceY = 0, sourceWidth = videoElement.videoWidth, sourceHeight = videoElement.videoHeight;
-                    if(aspectRatio !== 'source') {
-                        sourceWidth = canvas.width;
-                        sourceHeight = canvas.height;
-                        sourceX = (videoElement.videoWidth - sourceWidth) / 2;
-                        sourceY = (videoElement.videoHeight - sourceHeight) / 2;
+                    
+                    if (clip.filters.includes('vhs')) {
+                        // VHS requires class on parent, not filter on context
+                    } else {
+                        context.filter = getFilterString(clip.filters);
                     }
-                    context.drawImage(videoElement, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
+                    
+                    const videoAr = videoElement.videoWidth / videoElement.videoHeight;
+                    const canvasAr = canvas.width / canvas.height;
+                    
+                    let drawWidth = canvas.width;
+                    let drawHeight = canvas.height;
+                    let offsetX = 0;
+                    let offsetY = 0;
+
+                    if (videoAr > canvasAr) { // Video is wider than canvas
+                        drawHeight = canvas.width / videoAr;
+                        offsetY = (canvas.height - drawHeight) / 2;
+                    } else { // Video is taller or same AR
+                        drawWidth = canvas.height * videoAr;
+                        offsetX = (canvas.width - drawWidth) / 2;
+                    }
+                    
+                    context.drawImage(videoElement, 0, 0, videoElement.videoWidth, videoElement.videoHeight, offsetX, offsetY, drawWidth, drawHeight);
                     context.restore();
                     
                     framesProcessed++;
-                    setExportProgress((framesProcessed / totalFrames) * 100);
+                    setExportProgress(Math.round((framesProcessed / totalFrames) * 100));
 
                     requestAnimationFrame(drawFrame);
                 };

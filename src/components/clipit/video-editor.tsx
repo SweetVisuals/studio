@@ -60,7 +60,13 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
     const video = videoRef.current;
     if (!video || !videoSources[activeVideoIndex]) return;
 
-    video.src = videoSources[activeVideoIndex].url;
+    const currentSrc = video.src;
+    const newSrc = videoSources[activeVideoIndex].url;
+
+    // Only change src if it's different to avoid re-loading
+    if (currentSrc !== newSrc) {
+        video.src = newSrc;
+    }
 
     const handleLoadedMetadata = () => {
       setDuration(video.duration);
@@ -80,11 +86,17 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
     video.addEventListener('loadedmetadata', handleLoadedMetadata);
     video.addEventListener('timeupdate', handleTimeUpdate);
 
+    // Initial load for metadata
+    if (video.readyState < 1) {
+      video.load();
+    }
+
+
     return () => {
       video.removeEventListener('loadedmetadata', handleLoadedMetadata);
       video.removeEventListener('timeupdate', handleTimeUpdate);
       if (playIntervalRef.current) clearInterval(playIntervalRef.current);
-      if (overlayAudioUrl) URL.revokeObjectURL(overlayAudioUrl);
+      // Do not revoke overlayAudioUrl here as it's managed by clips
     };
   }, [activeVideoIndex, videoSources, clips.length, activeClipForPreview]);
   
@@ -96,67 +108,64 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
     }
   };
 
-  const playClip = async (clip: Clip) => {
-    const video = videoRef.current;
-    if (!video) return;
+  const playClip = (clipToPlay: Clip) => {
+      const video = videoRef.current;
+      if (!video) return;
 
-    // Stop any current playback
-    video.pause();
-    if (overlayAudioRef.current) overlayAudioRef.current.pause();
-
-    // Set active clip to apply filters BEFORE playback starts
-    setActiveClipForPreview(clip);
-
-    const setupAndPlay = (targetVideo: HTMLVideoElement) => {
-      targetVideo.currentTime = clip.start;
-      targetVideo.muted = clip.isMuted;
-      
-      const audioEl = overlayAudioRef.current;
-      if (audioEl && clip.overlayAudioUrl) {
-          if(audioEl.src !== clip.overlayAudioUrl){
-            audioEl.src = clip.overlayAudioUrl;
+      // Stop any current playback
+      video.pause();
+      if(overlayAudioRef.current) overlayAudioRef.current.pause();
+      setActiveClipForPreview(clipToPlay);
+  
+      const setupAndPlay = (targetVideo: HTMLVideoElement) => {
+        targetVideo.currentTime = clipToPlay.start;
+        targetVideo.muted = clipToPlay.isMuted;
+        
+        const audioEl = overlayAudioRef.current;
+        if(audioEl && clipToPlay.overlayAudioUrl) {
+          if (audioEl.src !== clipToPlay.overlayAudioUrl) {
+            audioEl.src = clipToPlay.overlayAudioUrl;
             audioEl.load();
           }
           audioEl.currentTime = 0;
-      }
-      
-      const playPromise = targetVideo.play();
-      if(playPromise !== undefined) {
-        playPromise.then(() => {
-          if(audioEl && clip.overlayAudioUrl) audioEl.play();
-        }).catch(err => {
-          console.error("Playback error:", err);
-          toast({variant: 'destructive', title: "Playback Error", description: "Could not play video."});
-          setActiveClipForPreview(null);
-        })
-      }
-    };
-
-    if (activeVideoIndex !== clip.sourceVideo) {
-      // If the source is different, update the state to trigger the useEffect
-      setActiveVideoIndex(clip.sourceVideo);
-      
-      // We need to wait for the video element's src to be updated by the useEffect.
-      // A small timeout is a pragmatic way to wait for the DOM update.
-      setTimeout(() => {
-        const newVideoEl = videoRef.current;
-        if (newVideoEl) {
-            // Check if video is ready, otherwise wait for the `canplay` event
-            if (newVideoEl.readyState >= 3) {
-                setupAndPlay(newVideoEl);
-            } else {
-                const onCanPlay = () => {
-                    setupAndPlay(newVideoEl);
-                    newVideoEl.removeEventListener('canplay', onCanPlay);
-                };
-                newVideoEl.addEventListener('canplay', onCanPlay);
-            }
         }
-      }, 100); 
-    } else {
-      // Already on the correct video source, just play it
-      setupAndPlay(video);
-    }
+
+        const playPromise = targetVideo.play();
+        if (playPromise !== undefined) {
+          playPromise.then(() => {
+            if (audioEl && clipToPlay.overlayAudioUrl) {
+              audioEl.play();
+            }
+          }).catch(error => {
+            console.error("Playback failed", error);
+            toast({ variant: 'destructive', title: 'Playback Error', description: 'Could not play video.' });
+            setActiveClipForPreview(null); // Reset on error
+          });
+        }
+      };
+
+      if(activeVideoIndex !== clipToPlay.sourceVideo) {
+        setActiveVideoIndex(clipToPlay.sourceVideo);
+        // The useEffect will handle loading the new video. We need to wait for it.
+        // A timeout is a pragmatic way to wait for the state update and re-render.
+        setTimeout(() => {
+            const newVideoEl = videoRef.current;
+            if(newVideoEl) {
+                if(newVideoEl.readyState >= 3) { // HAVE_ENOUGH_DATA
+                    setupAndPlay(newVideoEl);
+                } else {
+                    const canPlayHandler = () => {
+                        setupAndPlay(newVideoEl);
+                        newVideoEl.removeEventListener('canplay', canPlayHandler);
+                    };
+                    newVideoEl.addEventListener('canplay', canPlayHandler);
+                }
+            }
+        }, 100);
+      } else {
+        // Already on the correct video, just play
+        setupAndPlay(video);
+      }
   };
 
 
@@ -175,65 +184,79 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
   }
   
   const createMultiCamEdit = async () => {
+    if (!overlayAudioFile) {
+        toast({ variant: 'destructive', title: 'Audio Required', description: 'Please upload an audio file to base the multi-cam edit on.' });
+        return;
+    }
+    if (videoSources.length < 1) {
+        toast({ variant: 'destructive', title: 'Video Required', description: 'Please upload at least one video source.' });
+        return;
+    }
     setIsLoading(true);
-    toast({ title: 'AI Processing', description: 'Generating multi-cam edit...' });
+    toast({ title: 'AI Processing', description: 'Generating audio-driven multi-cam edit...' });
 
     try {
+        const audioDuration = await new Promise<number>((resolve, reject) => {
+            const audio = document.createElement('audio');
+            audio.preload = 'metadata';
+            audio.onloadedmetadata = () => resolve(audio.duration);
+            audio.onerror = () => reject(new Error('Could not load audio file.'));
+            audio.src = URL.createObjectURL(overlayAudioFile);
+        });
+
         const videoDurations = await Promise.all(
             videoSources.map(source => new Promise<number>((resolve) => {
                 const video = document.createElement('video');
                 video.preload = 'metadata';
-                video.onloadedmetadata = () => {
-                    URL.revokeObjectURL(video.src); // Clean up object URL
-                    resolve(video.duration);
-                };
-                video.onerror = () => {
-                    // Don't reject, just resolve with 0 so we can filter it out.
-                    console.warn(`Could not load metadata for: ${source.file.name}`);
-                    URL.revokeObjectURL(video.src);
-                    resolve(0);
-                };
-                video.src = URL.createObjectURL(source.file);
+                video.onloadedmetadata = () => resolve(video.duration);
+                video.onerror = () => resolve(0); // Resolve with 0 if error
+                video.src = source.url;
             }))
         );
-        
-        const validSources = videoSources
-            .map((source, index) => ({...source, duration: videoDurations[index]}))
-            .filter(s => s.duration > 3);
 
-        if(validSources.length === 0){
-             toast({ variant: 'destructive', title: 'Video Processing Error', description: `No source videos are long enough for a 3-second clip.`});
-             setIsLoading(false);
-             return;
+        const validSources = videoSources
+            .map((source, index) => ({ ...source, duration: videoDurations[index], originalIndex: index }))
+            .filter(s => s.duration >= 3);
+
+        if (validSources.length === 0) {
+            toast({ variant: 'destructive', title: 'No Valid Videos', description: 'All video sources are less than 3 seconds long.' });
+            setIsLoading(false);
+            return;
         }
 
         const newClips: Clip[] = [];
-        let currentVideoIndex = 0;
+        const clipDuration = 3;
+        const numClips = Math.ceil(audioDuration / clipDuration);
+        let timeCursor = 0;
+        
+        // We create a single Object URL for the audio that all clips will share
+        const sharedAudioUrl = URL.createObjectURL(overlayAudioFile);
 
-        for (let i = 0; i < 25; i++) {
-            const sourceInfo = validSources[currentVideoIndex % validSources.length];
-            const sourceDuration = sourceInfo.duration;
-            
-            const startTime = Math.random() * (sourceDuration - 3);
-            const endTime = startTime + 3;
+        for (let i = 0; i < numClips; i++) {
+            const sourceInfo = validSources[i % validSources.length];
+            const startTime = Math.random() * (sourceInfo.duration - clipDuration);
+            const endTime = startTime + clipDuration;
 
-            const originalSourceIndex = videoSources.findIndex(s => s.url === sourceInfo.url);
+            // This is the offset within the main timeline
+            const timelineStart = timeCursor;
+            const timelineEnd = timeCursor + clipDuration;
 
             newClips.push({
                 id: Date.now() + Math.random(),
+                // The start/end for a clip should be its position in its own source video
                 start: startTime,
                 end: endTime,
-                title: `Cut ${clips.length + newClips.length + 1} (Source ${originalSourceIndex + 1})`,
+                title: `Cut ${clips.length + newClips.length + 1} (Source ${sourceInfo.originalIndex + 1})`,
                 filters: ['none'],
-                isMuted: false,
-                sourceVideo: originalSourceIndex,
+                isMuted: true, // Mute the video track
+                overlayAudioUrl: sharedAudioUrl, // All clips share the same audio
+                sourceVideo: sourceInfo.originalIndex,
             });
-
-            currentVideoIndex++;
+            timeCursor = timelineEnd;
         }
-        
+
         setClips(prev => [...prev, ...newClips]);
-        toast({ title: 'AI Complete', description: `${newClips.length} cuts created for your multi-cam edit.` });
+        toast({ title: 'AI Complete', description: `${newClips.length} clips created to match your audio.` });
     } catch (error) {
         toast({
             variant: 'destructive',
@@ -276,13 +299,13 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
 
     // Reset for next clip
     setOverlayAudioFile(null);
-    if(overlayAudioUrl && !overlayAudioFile) {
-        // If we didn't just assign it, revoke the temp preview URL
+    if(overlayAudioUrl && !newClip.overlayAudioUrl) {
         URL.revokeObjectURL(overlayAudioUrl);
     }
     setOverlayAudioUrl(null);
     setIsMuted(false);
     setFilters(['none']);
+    if (audioInputRef.current) audioInputRef.current.value = '';
   };
 
   const handleAudioUpload = (e: ChangeEvent<HTMLInputElement>) => {
@@ -450,25 +473,17 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
                  <Button onClick={addClip} className="w-full">
                    <Plus /> Add Clip Manually
                  </Button>
-                {videoSources.length > 1 ? (
-                  <Button onClick={createMultiCamEdit} disabled={isLoading} className="w-full">
+                
+                  <Button onClick={createMultiCamEdit} disabled={isLoading || videoSources.length === 0 || !overlayAudioFile} className="w-full">
                       {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Sparkles className="mr-2 h-4 w-4" />}
-                      {isLoading ? 'Working...' : 'Create Multi-Cam Edit'}
+                      {isLoading ? 'Working...' : 'Create Audio-Driven Edit'}
                   </Button>
-                ) : (
-                  <Button onClick={() => {
-                    toast({title: "Multi-Cam Unavailable", description: "This feature requires at least two video sources."});
-                  }} className="w-full">
-                      <Sparkles className="mr-2 h-4 w-4" />
-                      Create Multi-Cam Edit
-                  </Button>
-                )}
             </div>
           </div>
         </CardContent>
       </Card>
       
-      <audio ref={overlayAudioRef} className='hidden' />
+      <audio ref={overlayAudioRef} className='hidden' crossOrigin="anonymous"/>
 
       <ClipList clips={clips} setClips={setClips} onPreview={playClip} aspectRatio={aspectRatio} videoSources={videoSources} />
     </div>
