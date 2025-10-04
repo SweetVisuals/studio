@@ -217,8 +217,8 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
         const videoDurations = await Promise.all(
             videoSources.map(source => new Promise<number>(resolve => {
                 const video = document.createElement('video');
-                video.src = source.url;
                 video.onloadedmetadata = () => resolve(video.duration);
+                video.src = source.url;
             }))
         );
 
@@ -235,7 +235,7 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
             const startTime = Math.random() * (sourceDuration - clipDuration);
             const endTime = startTime + clipDuration;
 
-            if (startTime < 0) continue;
+            if (startTime < 0 || endTime > sourceDuration) continue;
 
             newClips.push({
                 id: Date.now() + Math.random(),
@@ -255,7 +255,6 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
         setClips(newClips);
 
         toast({ title: 'AI Complete', description: `${newClips.length} cuts created for your multi-cam edit.` });
-        setIsLoading(false);
 
     } catch (error) {
         toast({
@@ -264,6 +263,7 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
             description: 'Could not generate clips. Please try again.',
         });
         console.error(error);
+    } finally {
         setIsLoading(false);
     }
   };
@@ -494,5 +494,3 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
     </div>
   );
 }
-
-    
