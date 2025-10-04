@@ -18,7 +18,7 @@ import {
 } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
 import { Captions, Download, Play, Trash2, Loader2, Film, Ratio, AudioWaveform, VolumeX } from 'lucide-react';
-import type { Clip, VideoFilter } from '@/app/page';
+import type { Clip, VideoFilter, AspectRatio } from '@/app/page';
 import { useToast } from '@/hooks/use-toast';
 import { formatTime } from '@/lib/utils';
 import { Input } from '../ui/input';
@@ -27,11 +27,11 @@ type ClipListProps = {
   clips: Clip[];
   setClips: React.Dispatch<React.SetStateAction<Clip[]>>;
   onPreview: (clip: Clip) => void;
-  videoUrl: string;
+  aspectRatio: AspectRatio;
   videoElement: HTMLVideoElement | null;
 };
 
-export default function ClipList({ clips, setClips, onPreview, videoElement }: ClipListProps) {
+export default function ClipList({ clips, setClips, onPreview, aspectRatio, videoElement }: ClipListProps) {
   const [selectedClip, setSelectedClip] = useState<Clip | null>(null);
   const [isCaptionDialogOpen, setIsCaptionDialogOpen] = useState(false);
   const [editableCaptions, setEditableCaptions] = useState('');
@@ -106,13 +106,13 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
       const context = canvas.getContext('2d');
       if (!context) throw new Error('Could not get canvas context');
 
-      const [w, h] = clip.aspectRatio.split(':').map(Number);
+      const [w, h] = aspectRatio.split(':').map(Number);
       const targetAspectRatio = w/h;
       
       let canvasWidth = videoElement.videoWidth;
       let canvasHeight = videoElement.videoHeight;
 
-      if (clip.aspectRatio !== 'source') {
+      if (aspectRatio !== 'source') {
           const videoAspectRatio = videoElement.videoWidth / videoElement.videoHeight;
           if (targetAspectRatio > videoAspectRatio) { // Target is wider
               canvasHeight = Math.round(videoElement.videoWidth / targetAspectRatio);
@@ -124,33 +124,38 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
       canvas.width = canvasWidth;
       canvas.height = canvasHeight;
 
-
-      let overlayAudio: HTMLAudioElement | null = null;
-      let combinedStream: MediaStream | null = null;
+      // --- Audio Setup ---
+      const audioContext = new AudioContext();
+      let videoTracks: MediaStreamVideoTrack[] = [];
+      let audioTracks: MediaStreamAudioTrack[] = [];
       
-      const videoCanvasStream = canvas.captureStream(30);
+      const canvasStream = canvas.captureStream(30);
+      videoTracks = canvasStream.getVideoTracks();
 
-      if(clip.overlayAudioUrl) {
-          overlayAudio = new Audio(clip.overlayAudioUrl);
-          overlayAudio.currentTime = 0;
-          await overlayAudio.play();
-          await overlayAudio.pause(); // Preload the audio
-          
-          const audioContext = new AudioContext();
-          const audioDestination = audioContext.createMediaStreamDestination();
-          
-          const sourceNode = audioContext.createMediaElementSource(overlayAudio);
-          sourceNode.connect(audioDestination);
-          
-          combinedStream = new MediaStream([
-              ...videoCanvasStream.getVideoTracks(), 
-              ...audioDestination.stream.getAudioTracks()
-          ]);
+      // Get video's original audio if not muted
+      if (!clip.isMuted) {
+        const videoAudioSource = audioContext.createMediaElementSource(videoElement);
+        const videoAudioDestination = audioContext.createMediaStreamDestination();
+        videoAudioSource.connect(videoAudioDestination);
+        audioTracks.push(...videoAudioDestination.stream.getAudioTracks());
       }
+      
+      // Get overlay audio if it exists
+      let overlayAudioElement: HTMLAudioElement | null = null;
+      if (clip.overlayAudioUrl) {
+          overlayAudioElement = new Audio(clip.overlayAudioUrl);
+          overlayAudioElement.crossOrigin = "anonymous";
+          await overlayAudioElement.load();
+          const overlayAudioSource = audioContext.createMediaElementSource(overlayAudioElement);
+          const overlayAudioDestination = audioContext.createMediaStreamDestination();
+          overlayAudioSource.connect(overlayAudioDestination);
+          audioTracks.push(...overlayAudioDestination.stream.getAudioTracks());
+      }
+      // --- End Audio Setup ---
 
-      const streamToRecord = combinedStream || videoCanvasStream;
+      const combinedStream = new MediaStream([...videoTracks, ...audioTracks]);
 
-      const recorder = new MediaRecorder(streamToRecord, { mimeType: 'video/webm;codecs=vp9,opus' });
+      const recorder = new MediaRecorder(combinedStream, { mimeType: 'video/webm;codecs=vp9,opus' });
       const chunks: Blob[] = [];
 
       recorder.ondataavailable = (e) => chunks.push(e.data);
@@ -167,14 +172,19 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
         
         setExportingClipId(null);
         toast({ title: 'Export complete!', description: 'Your video has been downloaded.' });
+        audioContext.close();
       };
 
       recorder.start();
 
       videoElement.currentTime = clip.start;
-      videoElement.muted = clip.isMuted;
-      if (overlayAudio) overlayAudio.play();
+      videoElement.muted = true; // Always mute the video element itself; we handle audio via AudioContext
+      
       await videoElement.play();
+      if(overlayAudioElement) {
+        overlayAudioElement.currentTime = 0;
+        overlayAudioElement.play();
+      }
 
       const totalFrames = (clip.end - clip.start) * 30;
       let frameCount = 0;
@@ -182,7 +192,7 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
       const drawFrame = () => {
         if (videoElement.currentTime >= clip.end || videoElement.paused) {
           videoElement.pause();
-          if (overlayAudio) overlayAudio.pause();
+          if (overlayAudioElement) overlayAudioElement.pause();
           recorder.stop();
           videoElement.muted = false;
           return;
@@ -195,7 +205,7 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
 
         // Calculate cropping
         let sourceX = 0, sourceY = 0, sourceWidth = videoElement.videoWidth, sourceHeight = videoElement.videoHeight;
-        if(clip.aspectRatio !== 'source') {
+        if(aspectRatio !== 'source') {
             sourceWidth = canvas.width;
             sourceHeight = canvas.height;
             sourceX = (videoElement.videoWidth - sourceWidth) / 2;
@@ -242,7 +252,12 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
   };
 
   if (clips.length === 0) {
-    return null;
+    return (
+        <div className="text-center py-10 border-2 border-dashed rounded-lg">
+            <h3 className="text-lg font-semibold text-muted-foreground">No Clips Yet</h3>
+            <p className="text-sm text-muted-foreground">Use the controls above to create clips manually or with AI.</p>
+        </div>
+    );
   }
 
   const getFilterNames = (filters: VideoFilter[]) => {
@@ -281,7 +296,7 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
                   {formatTime(clip.start)} - {formatTime(clip.end)}
                 </p>
                 <div className='flex flex-wrap gap-2 text-xs text-muted-foreground items-center'>
-                    <span className="flex items-center gap-1"><Ratio className="size-3" /> {clip.aspectRatio}</span>
+                    <span className="flex items-center gap-1"><Ratio className="size-3" /> {aspectRatio}</span>
                     <span className="flex items-center gap-1"><Film className="size-3" /> {getFilterNames(clip.filters)}</span>
                     {clip.overlayAudioUrl && <span className="flex items-center gap-1"><AudioWaveform className="size-3 text-accent" /> Custom Audio</span>}
                     {clip.isMuted && <span className="flex items-center gap-1"><VolumeX className="size-3 text-destructive" /> Muted</span>}
@@ -301,7 +316,7 @@ export default function ClipList({ clips, setClips, onPreview, videoElement }: C
                   <Button variant="outline" size="sm" onClick={() => openCaptionEditor(clip)}>
                     <Captions className="h-4 w-4 mr-2" />
                     {clip.captions ? 'Edit' : 'Add'} Captions
-                    {clip.captions === '' && !isCaptionDialogOpen && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}
+                    {clip.captions.includes('Generating') && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}
                   </Button>
                   <Button
                     size="sm"

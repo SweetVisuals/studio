@@ -15,7 +15,6 @@ export type Clip = {
   title: string;
   captions: string;
   filters: VideoFilter[];
-  aspectRatio: AspectRatio;
   overlayAudioUrl?: string;
   isMuted: boolean;
 };

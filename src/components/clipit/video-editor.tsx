@@ -12,12 +12,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, Play, Sparkles, Loader2, Volume2, VolumeX, Upload } from 'lucide-react';
+import { Plus, Play, Sparkles, Loader2, Volume2, VolumeX, Upload, Music4 } from 'lucide-react';
 import ClipList from './clip-list';
 import type { Clip, VideoFilter, AspectRatio } from '@/app/page';
 import { formatTime } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
-import { generateCaptionsAction, detectScenesAction } from '@/app/actions';
+import { generateCaptionsAction } from '@/app/actions';
 import { cn } from '@/lib/utils';
 import { Checkbox } from '../ui/checkbox';
 
@@ -100,12 +100,14 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
     video.muted = clip.isMuted;
     video.play();
     
-    if (overlayAudioRef.current && clip.overlayAudioUrl) {
-        if(overlayAudioRef.current.src !== clip.overlayAudioUrl){
-            overlayAudioRef.current.src = clip.overlayAudioUrl;
-        }
-        overlayAudioRef.current.currentTime = 0;
-        overlayAudioRef.current.play();
+    const audioEl = overlayAudioRef.current;
+    if (audioEl && clip.overlayAudioUrl) {
+      // Ensure we are playing the correct audio source for the clip
+      if(audioEl.src !== clip.overlayAudioUrl){
+        audioEl.src = clip.overlayAudioUrl;
+      }
+      audioEl.currentTime = 0;
+      audioEl.play();
     }
 
     if (playIntervalRef.current) clearInterval(playIntervalRef.current);
@@ -113,7 +115,7 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
     playIntervalRef.current = setInterval(() => {
       if (video.currentTime >= clip.end) {
         video.pause();
-        if(overlayAudioRef.current) overlayAudioRef.current.pause();
+        if(audioEl) audioEl.pause();
         if (playIntervalRef.current) clearInterval(playIntervalRef.current);
         setActiveClipForPreview(null);
         video.muted = false;
@@ -129,7 +131,6 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
         title: 'Preview',
         captions: 'Sample Captions',
         filters: filters,
-        aspectRatio: aspectRatio,
         isMuted: isMuted,
         overlayAudioUrl: overlayAudioUrl || undefined,
     };
@@ -137,49 +138,85 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
   }
   
   const detectScenes = async () => {
+    if (!overlayAudioUrl || !videoRef.current) {
+      toast({
+        variant: 'destructive',
+        title: 'Audio Required',
+        description: 'Please upload an audio file before using AI Scene Detection.',
+      });
+      return;
+    }
+
     setIsLoadingScenes(true);
-    toast({ title: 'AI Processing', description: 'Detecting potential clips in your video...' });
+    toast({ title: 'AI Processing', description: 'Generating clips based on your audio length...' });
     
     try {
-        if (!videoRef.current) throw new Error("Video element not available");
-
         const videoDuration = videoRef.current.duration;
-        const videoDataUri = 'data:video/mp4;base64,'; // Dummy data for now
         
-        const { sceneTimestamps } = await detectScenesAction({ videoDataUri });
+        // Get audio duration
+        const audioEl = new Audio(overlayAudioUrl);
+        audioEl.onloadedmetadata = () => {
+          const audioDuration = audioEl.duration;
 
-        const newSuggestions: Omit<Clip, 'id'|'captions'>[] = [];
-        const numSuggestions = 8; 
-        const minClipDuration = 10;
-        const maxClipDuration = 45;
-        const allFilters: VideoFilter[] = ['none', 'bw', 'vhs', 'night-vision'];
-        const aspectRatios: AspectRatio[] = ['9:16', '1:1', '16:9'];
+          const newSuggestions: Omit<Clip, 'id'|'captions'>[] = [];
+          const numSuggestions = 10;
+          
+          if (videoDuration < audioDuration) {
+              toast({ variant: 'destructive', title: 'Video Too Short', description: 'The source video is shorter than the audio file.'});
+              setIsLoadingScenes(false);
+              return;
+          }
 
-        for (let i = 0; i < numSuggestions; i++) {
-            const clipDuration = Math.random() * (maxClipDuration - minClipDuration) + minClipDuration;
-            const clipStart = Math.random() * (videoDuration - clipDuration);
-            const clipEnd = clipStart + clipDuration;
+          const timeBetweenClips = (videoDuration - audioDuration) / (numSuggestions - 1);
 
-            newSuggestions.push({
-                start: clipStart,
-                end: clipEnd,
-                title: `AI Clip ${i + 1}`,
-                filters: [allFilters[Math.floor(Math.random() * allFilters.length)]],
-                aspectRatio: aspectRatios[Math.floor(Math.random() * aspectRatios.length)],
-                isMuted: Math.random() > 0.7,
+          for (let i = 0; i < numSuggestions; i++) {
+              const clipStart = i * timeBetweenClips;
+              const clipEnd = clipStart + audioDuration;
+
+              newSuggestions.push({
+                  start: clipStart,
+                  end: clipEnd,
+                  title: `AI Clip ${i + 1}`,
+                  filters: filters,
+                  isMuted: true, // Muted because we use the overlay
+                  overlayAudioUrl: overlayAudioUrl,
+              });
+          }
+          
+          setSuggestedClips(newSuggestions);
+          setClips(prev => {
+            const existingIds = new Set(prev.map(c => c.id));
+            const newClipsWithCaptions = newSuggestions.map(s => ({
+              ...s,
+              id: Date.now() + Math.random(),
+              captions: 'Generating captions...',
+            }));
+            
+            newClipsWithCaptions.forEach(newClip => {
+                generateCaptionsAction({ audioDataUri: 'data:audio/wav;base64,' }).then(result => {
+                    setClips(prevClips => prevClips.map(c => c.id === newClip.id ? { ...c, captions: result.captions } : c));
+                });
             });
+
+            return [...prev, ...newClipsWithCaptions];
+          });
+
+
+          toast({ title: 'AI Complete', description: `${newSuggestions.length} clips created and added to your list.` });
+          setIsLoadingScenes(false);
         }
-        
-        setSuggestedClips(newSuggestions);
-        toast({ title: 'AI Complete', description: `${newSuggestions.length} clips suggested.` });
+        audioEl.onerror = () => {
+          toast({ variant: 'destructive', title: 'Audio Error', description: 'Could not load audio file duration.' });
+          setIsLoadingScenes(false);
+        }
+
     } catch (error) {
         toast({
             variant: 'destructive',
             title: 'Scene Detection Failed',
-            description: 'Could not detect scenes. Please try again.',
+            description: 'Could not generate clips. Please try again.',
         });
         console.error(error);
-    } finally {
         setIsLoadingScenes(false);
     }
   };
@@ -197,21 +234,14 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
       title: `My Clip ${clips.length + 1}`,
       captions: '',
       filters,
-      aspectRatio,
       isMuted,
       overlayAudioUrl: overlayAudioUrl || undefined,
     };
     setClips((prev) => [newClip, ...prev]);
     toast({ title: 'Clip Added', description: `"${newClip.title}" was added. Generating captions...` });
 
-    // Reset audio for next clip
-    setOverlayAudioFile(null);
-    setOverlayAudioUrl(null);
-    if(audioInputRef.current) audioInputRef.current.value = "";
-    // also reset mute state
-    setIsMuted(false);
-
-
+    // Do not reset audio for next clip
+    
     try {
         const dummyAudioDataUri = 'data:audio/wav;base64,'; 
         const result = await generateCaptionsAction({ audioDataUri: dummyAudioDataUri });
@@ -227,9 +257,11 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
     setStart(clip.start);
     setEnd(clip.end);
     setFilters(clip.filters);
-    setAspectRatio(clip.aspectRatio);
     setIsMuted(clip.isMuted);
-    setOverlayAudioUrl(clip.overlayAudioUrl || null);
+    
+    // Do not change global audio when selecting a clip
+    // setOverlayAudioUrl(clip.overlayAudioUrl || null);
+    
     if (videoRef.current) {
       videoRef.current.currentTime = clip.start;
       videoRef.current.pause();
@@ -240,11 +272,15 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
   const handleAudioUpload = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      // Revoke old URL if it exists
+      if(overlayAudioUrl) {
+          URL.revokeObjectURL(overlayAudioUrl);
+      }
       setOverlayAudioFile(file);
       const url = URL.createObjectURL(file);
       setOverlayAudioUrl(url);
       setIsMuted(true); // Automatically mute original video
-      toast({title: 'Audio Added', description: `Added ${file.name} and muted original video.`})
+      toast({title: 'Audio Added', description: `Added ${file.name}. Original video muted.`})
     }
   };
 
@@ -276,7 +312,7 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
   const vhsClass = "after:content-[''] after:absolute after:top-0 after:left-0 after:w-full after:h-full after:bg-[rgba(0,0,0,0.1)] after:z-10 after:pointer-events-none after:animate-vhs-scanlines";
   
   const activeFilters = activeClipForPreview?.filters ?? filters;
-  const activeAspectRatio = activeClipForPreview?.aspectRatio ?? aspectRatio;
+  const activeAspectRatio = aspectRatio;
 
   const getAspectRatioClass = (ar: AspectRatio) => {
     switch(ar) {
@@ -363,25 +399,30 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
                         ))}
                     </div>
                 </div>
+                
+                <Card className='p-3 space-y-2'>
+                    <Label className='flex items-center gap-2'><Music4 className='text-accent'/> Overlay Audio</Label>
+                    <div className="flex items-center gap-2">
+                        <Button onClick={() => audioInputRef.current?.click()} variant="outline" className="w-full">
+                            <Upload /> {overlayAudioFile ? 'Change' : 'Upload'}
+                        </Button>
+                        <input type="file" accept='audio/*' ref={audioInputRef} onChange={handleAudioUpload} className='sr-only'/>
+                        <Button variant="outline" size="icon" onClick={() => setIsMuted(!isMuted)} disabled={!!overlayAudioUrl}>
+                            {isMuted ? <VolumeX className='text-destructive'/> : <Volume2 />}
+                        </Button>
+                    </div>
+                    {overlayAudioFile && <p className='text-xs text-muted-foreground truncate'>Current: {overlayAudioFile.name}</p>}
+                </Card>
 
-                <div className="flex items-center gap-2">
-                    <Button onClick={() => audioInputRef.current?.click()} variant="outline" className="w-full">
-                        <Upload /> Upload Audio
-                    </Button>
-                    <input type="file" accept='audio/*' ref={audioInputRef} onChange={handleAudioUpload} className='sr-only'/>
-                    <Button variant="outline" size="icon" onClick={() => setIsMuted(!isMuted)}>
-                        {isMuted ? <VolumeX className='text-destructive'/> : <Volume2 />}
-                    </Button>
-                </div>
                  <Button onClick={handlePreviewCurrentSelection} className="w-full bg-accent hover:bg-accent/90">
-                   <Play /> Preview Clip
+                   <Play /> Preview Selection
                  </Button>
                  <Button onClick={addClip} className="w-full">
-                   <Plus /> Add Clip
+                   <Plus /> Add Clip Manually
                  </Button>
                 <Button onClick={detectScenes} disabled={isLoadingScenes} className="w-full">
                     {isLoadingScenes ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Sparkles className="mr-2 h-4 w-4" />}
-                    {isLoadingScenes ? 'Working...' : 'AI Scene Detection'}
+                    {isLoadingScenes ? 'Working...' : 'AI Clip Generation'}
                 </Button>
             </div>
           </div>
@@ -412,7 +453,7 @@ export default function VideoEditor({ videoUrl, videoRef }: VideoEditorProps) {
         </div>
       )}
 
-      <ClipList clips={clips} setClips={setClips} onPreview={playClip} videoUrl={videoUrl} videoElement={videoRef.current} />
+      <ClipList clips={clips} setClips={setClips} onPreview={playClip} aspectRatio={aspectRatio} videoElement={videoRef.current} />
     </div>
   );
 }
