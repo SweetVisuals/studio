@@ -1,4 +1,4 @@
 import { config } from 'dotenv';
 config();
 
-import '@/ai/flows/smart-captioning.ts';
+// Intentionally empty. Add Genkit flow imports here.

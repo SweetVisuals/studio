@@ -13,44 +13,47 @@ export type Clip = {
   start: number;
   end: number;
   title: string;
-  captions: string;
   filters: VideoFilter[];
   overlayAudioUrl?: string;
   isMuted: boolean;
+  sourceVideo: number; // Index of the video in the videoUrls array
+};
+
+export type VideoSource = {
+  file: File;
+  url: string;
 };
 
 export default function Home() {
-  const [videoFile, setVideoFile] = useState<File | null>(null);
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-
+  const [videoSources, setVideoSources] = useState<VideoSource[]>([]);
+  
   const handleVideoUpload = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      setVideoFile(file);
-      const url = URL.createObjectURL(file);
-      setVideoUrl(url);
+    const files = event.target.files;
+    if (files && files.length > 0) {
+      const newSources = Array.from(files).map(file => ({
+        file,
+        url: URL.createObjectURL(file)
+      }));
+      setVideoSources(prev => [...prev, ...newSources]);
     }
   };
 
   useEffect(() => {
-    // Cleanup the object URL when the component unmounts
+    // Cleanup the object URLs when the component unmounts
     return () => {
-      if (videoUrl) {
-        URL.revokeObjectURL(videoUrl);
-      }
+      videoSources.forEach(source => URL.revokeObjectURL(source.url));
     };
-  }, [videoUrl]);
+  }, [videoSources]);
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-background">
       <Header />
       <main className="flex-1 px-4 py-8 md:px-6">
         <div className="mx-auto max-w-7xl">
-          {!videoUrl ? (
-            <VideoUploader onVideoUpload={handleVideoUpload} />
+          {videoSources.length === 0 ? (
+            <VideoUploader onVideoUpload={handleVideoUpload} multiple />
           ) : (
-            <VideoEditor videoUrl={videoUrl} videoRef={videoRef} />
+            <VideoEditor videoSources={videoSources} />
           )}
         </div>
       </main>

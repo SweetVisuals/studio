@@ -10,15 +10,16 @@ import { UploadCloud } from 'lucide-react';
 
 type VideoUploaderProps = {
   onVideoUpload: (event: ChangeEvent<HTMLInputElement>) => void;
+  multiple?: boolean;
 };
 
-export default function VideoUploader({ onVideoUpload }: VideoUploaderProps) {
+export default function VideoUploader({ onVideoUpload, multiple = false }: VideoUploaderProps) {
   return (
     <Card className="mx-auto max-w-3xl text-center">
       <CardHeader>
-        <CardTitle className="font-headline text-3xl">Upload Your Video</CardTitle>
+        <CardTitle className="font-headline text-3xl">Upload Your Videos</CardTitle>
         <CardDescription>
-          Drag and drop or click to select a long-form video to start clipping.
+          Drag and drop or click to select one or more videos to start clipping.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -38,6 +39,7 @@ export default function VideoUploader({ onVideoUpload }: VideoUploaderProps) {
               className="sr-only"
               accept="video/mp4,video/quicktime,video/webm"
               onChange={onVideoUpload}
+              multiple={multiple}
             />
           </label>
         </div>
