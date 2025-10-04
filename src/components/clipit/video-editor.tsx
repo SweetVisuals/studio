@@ -224,7 +224,7 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
 
         const newClips: Clip[] = [];
         let currentVideoIndex = 0;
-        const clipDuration = 8; // 8 seconds per clip
+        const clipDuration = 3; // 3 seconds per clip
         let totalTime = 0;
 
         // Aim for a total ~60 second video
