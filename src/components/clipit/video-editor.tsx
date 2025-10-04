@@ -213,17 +213,25 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
     setIsLoading(true);
     toast({ title: 'AI Processing', description: 'Generating multi-cam edit...' });
     
-    try {
-        const videoDurations = await Promise.all(
-            videoSources.map(source => new Promise<number>((resolve, reject) => {
-                const video = document.createElement('video');
-                video.preload = 'metadata';
-                video.onloadedmetadata = () => resolve(video.duration);
-                video.onerror = () => reject(new Error(`Could not load video: ${source.file.name}`));
-                video.src = source.url;
-            }))
-        );
+    // This is a temporary workaround to get durations.
+    // A more robust solution would be to use a library like `ffprobe` on the server
+    // or have the user input durations if they are not available.
+    const videoDurations = await Promise.all(
+        videoSources.map(source => new Promise<number>((resolve) => {
+            const video = document.createElement('video');
+            video.preload = 'metadata';
+            video.onloadedmetadata = () => {
+                resolve(video.duration);
+            };
+            video.onerror = () => {
+                console.warn(`Could not load metadata for ${source.file.name}. Defaulting duration to 300s.`);
+                resolve(300); // Fallback duration
+            };
+            video.src = source.url;
+        }))
+    );
 
+    try {
         const newClips: Clip[] = [];
         let currentVideoIndex = 0;
         const clipDuration = 3;
@@ -234,9 +242,8 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
             const sourceDuration = videoDurations[currentVideoIndex];
             
             if (sourceDuration <= clipDuration) {
-                // Skip this video if it's shorter than the clip duration
                 currentVideoIndex = (currentVideoIndex + 1) % videoSources.length;
-                if (currentVideoIndex === 0) break; // Avoid infinite loop if all videos are too short
+                if (newClips.length === 0 && Array.from({length: videoSources.length}).every((_, i) => videoDurations[i] <= clipDuration)) break; // prevent infinite loop
                 continue;
             }
             
@@ -254,7 +261,6 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
             });
 
             totalTime += clipDuration;
-            // Move to the next video
             currentVideoIndex = (currentVideoIndex + 1) % videoSources.length;
         }
         
