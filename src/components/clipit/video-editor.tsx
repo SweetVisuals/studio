@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/select';
 import { Plus, Play, Sparkles, Loader2, Volume2, VolumeX, Upload, Music4, Film, UploadCloud } from 'lucide-react';
 import ClipList from './clip-list';
-import type { Clip, VideoFilter, AspectRatio, VideoSource } from '@/app/page';
+import type { Clip, VideoFilter, AspectRatio, VideoSource, ClipCut } from '@/app/page';
 import { formatTime } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
@@ -40,6 +40,8 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
   const [clips, setClips] = useState<Clip[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [activeClipForPreview, setActiveClipForPreview] = useState<Clip | null>(null);
+  const [currentCutIndex, setCurrentCutIndex] = useState(0);
+
 
   const [filters, setFilters] = useState<VideoFilter[]>(['none']);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('9:16');
@@ -73,12 +75,53 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
         setEnd(Math.min(15, video.duration));
       }
     };
+    
     const handleTimeUpdate = () => {
+      if (!video) return;
       setCurrentTime(video.currentTime);
-      if (activeClipForPreview && video.currentTime >= activeClipForPreview.end) {
-        video.pause();
-        setActiveClipForPreview(null);
-        if(overlayAudioRef.current) overlayAudioRef.current.pause();
+    
+      if (activeClipForPreview) {
+        if (activeClipForPreview.cuts && activeClipForPreview.cuts.length > 0) {
+          const currentCut = activeClipForPreview.cuts[currentCutIndex];
+          if (video.currentTime >= currentCut.end) {
+            video.pause();
+            const nextCutIndex = currentCutIndex + 1;
+            if (nextCutIndex < activeClipForPreview.cuts.length) {
+              setCurrentCutIndex(nextCutIndex);
+              const nextCut = activeClipForPreview.cuts[nextCutIndex];
+              const playNextCut = () => {
+                if(videoRef.current) {
+                  videoRef.current.currentTime = nextCut.start;
+                  videoRef.current.play().catch(e => console.error("Playback failed for next cut", e));
+                }
+              };
+
+              if (activeVideoIndex !== nextCut.sourceVideo) {
+                setActiveVideoIndex(nextCut.sourceVideo);
+                // The video source will change, we need to wait for it to be ready
+                const onCanPlay = () => {
+                  playNextCut();
+                  video.removeEventListener('canplay', onCanPlay);
+                };
+                video.addEventListener('canplay', onCanPlay);
+              } else {
+                playNextCut();
+              }
+            } else {
+              // End of multi-cut preview
+              setActiveClipForPreview(null);
+              setCurrentCutIndex(0);
+              if (overlayAudioRef.current) overlayAudioRef.current.pause();
+            }
+          }
+        } else {
+          // Single cut clip logic
+          if (video.currentTime >= activeClipForPreview.end) {
+            video.pause();
+            setActiveClipForPreview(null);
+            if(overlayAudioRef.current) overlayAudioRef.current.pause();
+          }
+        }
       }
     };
     
@@ -94,7 +137,7 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
       video.removeEventListener('timeupdate', handleTimeUpdate);
       if (playIntervalRef.current) clearInterval(playIntervalRef.current);
     };
-  }, [activeVideoIndex, videoSources, clips.length, activeClipForPreview]);
+  }, [activeVideoIndex, videoSources, clips.length, activeClipForPreview, currentCutIndex]);
   
   const handleSeek = (event: React.ChangeEvent<HTMLInputElement>) => {
     const time = parseFloat(event.target.value);
@@ -105,59 +148,67 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
   };
 
   const playClip = (clipToPlay: Clip) => {
-      const video = videoRef.current;
-      if (!video) return;
-
-      if (clipToPlay.cuts && clipToPlay.cuts.length > 0) {
-        toast({ title: 'Preview Not Available', description: 'Preview for multi-cut clips is coming soon. Use the Export button for now.' });
-        return;
-      }
-
-      video.pause();
-      if(overlayAudioRef.current) overlayAudioRef.current.pause();
-      setActiveClipForPreview(clipToPlay);
+    const video = videoRef.current;
+    if (!video) return;
   
-      const setupAndPlay = (targetVideo: HTMLVideoElement) => {
-        targetVideo.currentTime = clipToPlay.start;
-        targetVideo.muted = clipToPlay.isMuted;
-        
-        const audioEl = overlayAudioRef.current;
-        if(audioEl && clipToPlay.overlayAudioUrl) {
-          if (audioEl.src !== clipToPlay.overlayAudioUrl) {
-            audioEl.src = clipToPlay.overlayAudioUrl;
-            audioEl.load();
+    video.pause();
+    if(overlayAudioRef.current) overlayAudioRef.current.pause();
+    setActiveClipForPreview(clipToPlay);
+  
+    const audioEl = overlayAudioRef.current;
+    if (audioEl && clipToPlay.overlayAudioUrl) {
+      if (audioEl.src !== clipToPlay.overlayAudioUrl) {
+        audioEl.src = clipToPlay.overlayAudioUrl;
+        audioEl.load();
+      }
+      audioEl.currentTime = 0;
+    }
+  
+    let startSourceVideo: number;
+    let startTime: number;
+    
+    if (clipToPlay.cuts && clipToPlay.cuts.length > 0) {
+      setCurrentCutIndex(0);
+      const firstCut = clipToPlay.cuts[0];
+      startSourceVideo = firstCut.sourceVideo;
+      startTime = firstCut.start;
+    } else {
+      startSourceVideo = clipToPlay.sourceVideo;
+      startTime = clipToPlay.start;
+    }
+  
+    const setupAndPlay = (targetVideo: HTMLVideoElement) => {
+      targetVideo.currentTime = startTime;
+      targetVideo.muted = clipToPlay.isMuted;
+  
+      const playPromise = targetVideo.play();
+      if (playPromise !== undefined) {
+        playPromise.then(() => {
+          if (audioEl && clipToPlay.overlayAudioUrl) {
+            audioEl.play().catch(e => console.error("Audio playback failed", e));
           }
-          audioEl.currentTime = 0;
-        }
-
-        const playPromise = targetVideo.play();
-        if (playPromise !== undefined) {
-          playPromise.then(() => {
-            if (audioEl && clipToPlay.overlayAudioUrl) {
-              audioEl.play();
-            }
-          }).catch(error => {
-            console.error("Playback failed", error);
-            toast({ variant: 'destructive', title: 'Playback Error', description: 'Could not play video.' });
-            setActiveClipForPreview(null);
-          });
+        }).catch(error => {
+          console.error("Playback failed", error);
+          toast({ variant: 'destructive', title: 'Playback Error', description: 'Could not play video.' });
+          setActiveClipForPreview(null);
+        });
+      }
+    };
+  
+    if (activeVideoIndex !== startSourceVideo) {
+      setActiveVideoIndex(startSourceVideo);
+      const onCanPlay = () => {
+        const newVideoEl = videoRef.current;
+        if (newVideoEl) {
+          setupAndPlay(newVideoEl);
+          newVideoEl.removeEventListener('canplay', onCanPlay);
         }
       };
-
-      if(activeVideoIndex !== clipToPlay.sourceVideo) {
-        setActiveVideoIndex(clipToPlay.sourceVideo);
-        const onCanPlay = () => {
-            const newVideoEl = videoRef.current;
-            if(newVideoEl) {
-                setupAndPlay(newVideoEl);
-                newVideoEl.removeEventListener('canplay', onCanPlay);
-            }
-        };
-        video.addEventListener('canplay', onCanPlay);
-
-      } else {
-        setupAndPlay(video);
-      }
+      video.addEventListener('canplay', onCanPlay);
+      video.load(); // Trigger loading of the new source
+    } else {
+      setupAndPlay(video);
+    }
   };
 
 
@@ -177,86 +228,92 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
   
   const createMultiCamEdit = async () => {
     if (!overlayAudioFile) {
-        toast({ variant: 'destructive', title: 'Audio Required', description: 'Please upload an audio file to base the multi-cam edit on.' });
-        return;
+      toast({ variant: 'destructive', title: 'Audio Required', description: 'Please upload an audio file to base the multi-cam edit on.' });
+      return;
     }
-    if (videoSources.length < 1) {
-        toast({ variant: 'destructive', title: 'Video Required', description: 'Please upload at least one video source.' });
-        return;
+    if (videoSources.length === 0) {
+      toast({ variant: 'destructive', title: 'Video Required', description: 'Please upload at least one video source.' });
+      return;
     }
     setIsLoading(true);
     toast({ title: 'AI Processing', description: 'Generating audio-driven multi-cam edit...' });
-
+  
     try {
-        const audioDuration = await new Promise<number>((resolve, reject) => {
-            const audio = document.createElement('audio');
-            audio.preload = 'metadata';
-            audio.onloadedmetadata = () => resolve(audio.duration);
-            audio.onerror = () => reject(new Error('Could not load audio file.'));
-            audio.src = URL.createObjectURL(overlayAudioFile);
-        });
-
-        const videoDurations = await Promise.all(
-            videoSources.map(source => new Promise<number>((resolve, reject) => {
-                const video = document.createElement('video');
-                video.preload = 'metadata';
-                video.onloadedmetadata = () => resolve(video.duration);
-                video.onerror = () => resolve(0);
-                video.src = source.url;
-            }))
-        );
-
-        const validSources = videoSources
-            .map((source, index) => ({ ...source, duration: videoDurations[index], originalIndex: index }))
-            .filter(s => s.duration >= 3);
-
-        if (validSources.length === 0) {
-            toast({ variant: 'destructive', title: 'No Valid Videos', description: 'All video sources are less than 3 seconds long.' });
-            setIsLoading(false);
-            return;
-        }
-
-        const cuts = [];
-        const clipDuration = 3;
-        const numClips = Math.ceil(audioDuration / clipDuration);
-        
-        for (let i = 0; i < numClips; i++) {
-            const sourceInfo = validSources[i % validSources.length];
-            const startTime = Math.random() * (sourceInfo.duration - clipDuration);
-            const endTime = startTime + clipDuration;
-
-            cuts.push({
-                sourceVideo: sourceInfo.originalIndex,
-                start: startTime,
-                end: endTime,
-            });
-        }
-
-        const sharedAudioUrl = URL.createObjectURL(overlayAudioFile);
-
-        const newClip: Clip = {
-            id: Date.now(),
-            start: 0,
-            end: audioDuration,
-            title: `Multi-Cam Edit - ${overlayAudioFile.name}`,
-            filters: ['none'],
-            isMuted: true,
-            overlayAudioUrl: sharedAudioUrl,
-            sourceVideo: -1, // Indicates a multi-source clip
-            cuts: cuts
+      const audioDuration = await new Promise<number>((resolve, reject) => {
+        const audio = document.createElement('audio');
+        audio.preload = 'metadata';
+        audio.onloadedmetadata = () => {
+          URL.revokeObjectURL(audio.src); // Clean up the object URL
+          resolve(audio.duration);
         };
-
-        setClips(prev => [...prev, newClip]);
-        toast({ title: 'AI Complete', description: 'A new multi-cam clip has been created.' });
-    } catch (error) {
-        toast({
-            variant: 'destructive',
-            title: 'Multi-cam Edit Failed',
-            description: (error as Error).message || 'Could not generate clips. Please try again.',
+        audio.onerror = () => {
+          URL.revokeObjectURL(audio.src);
+          reject(new Error('Could not load audio file.'));
+        };
+        audio.src = URL.createObjectURL(overlayAudioFile);
+      });
+  
+      const videoDurations = await Promise.all(
+        videoSources.map(source => new Promise<number>((resolve) => {
+          const video = document.createElement('video');
+          video.preload = 'metadata';
+          video.onloadedmetadata = () => resolve(video.duration);
+          video.onerror = () => resolve(0); // If a video fails, treat its duration as 0
+          video.src = source.url;
+        }))
+      );
+  
+      const validSources = videoSources
+        .map((source, index) => ({ originalIndex: index, duration: videoDurations[index] }))
+        .filter(s => s.duration >= 3);
+  
+      if (validSources.length === 0) {
+        throw new Error('No valid video sources longer than 3 seconds found.');
+      }
+      
+      const clipDuration = 3;
+      const numClips = Math.ceil(audioDuration / clipDuration);
+      const cuts: ClipCut[] = [];
+  
+      for (let i = 0; i < numClips; i++) {
+        const sourceInfo = validSources[i % validSources.length];
+        const startTime = Math.random() * (sourceInfo.duration - clipDuration);
+        const endTime = startTime + clipDuration;
+  
+        cuts.push({
+          sourceVideo: sourceInfo.originalIndex,
+          start: startTime,
+          end: endTime,
         });
-        console.error(error);
+      }
+  
+      // Since this is a multi-cam edit, we create one audio URL to be shared.
+      const sharedAudioUrl = URL.createObjectURL(overlayAudioFile);
+  
+      const newClip: Clip = {
+        id: Date.now(),
+        start: 0,
+        end: audioDuration,
+        title: `Multi-Cam Edit - ${overlayAudioFile.name}`,
+        filters: ['none'],
+        isMuted: true, // Mute the original video tracks
+        overlayAudioUrl: sharedAudioUrl,
+        sourceVideo: -1, // Indicates a multi-source clip
+        cuts: cuts,
+      };
+      
+      setClips(prev => [newClip, ...prev]);
+      toast({ title: 'AI Complete', description: 'A new multi-cam clip has been created.' });
+  
+    } catch (error) {
+      console.error('Multi-cam edit failed:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Multi-cam Edit Failed',
+        description: (error as Error).message || 'An unexpected error occurred.',
+      });
     } finally {
-        setIsLoading(false);
+      setIsLoading(false);
     }
   };
 
