@@ -21,8 +21,14 @@ import {
 } from '@/components/ui/dialog';
 import { Plus, Play, Sparkles, Loader2, Volume2, VolumeX, Upload, Music4, Film, UploadCloud, Pause, X, ChevronUp, ChevronDown, Settings, Download, Expand } from 'lucide-react';
 import ClipList from './clip-list';
-import type { Clip, VideoFilter, AspectRatio, VideoSource, ClipCut } from '@/app/page';
+import type { Clip, VideoFilter, AspectRatio, ClipCut } from '@/app/page';
 import { formatTime } from '@/lib/utils';
+
+type VideoSource = {
+  file: File;
+  url: string;
+  cutDuration: number;
+};
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { Checkbox } from '../ui/checkbox';

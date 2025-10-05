@@ -1,4 +1,4 @@
-'use client';
+s  'use client';
 
 import { useState, useRef, useEffect, type ChangeEvent } from 'react';
 import Header from '@/components/clipit/header';
@@ -29,17 +29,19 @@ export type Clip = {
 export type VideoSource = {
   file: File;
   url: string;
+  cutDuration: number; // Duration in seconds for cuts from this source
 };
 
 export default function Home() {
   const [videoSources, setVideoSources] = useState<VideoSource[]>([]);
-  
+
   const handleVideoUpload = (event: ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (files && files.length > 0) {
       const newSources = Array.from(files).map(file => ({
         file,
-        url: URL.createObjectURL(file)
+        url: URL.createObjectURL(file),
+        cutDuration: 3 // Default cut duration in seconds
       }));
       setVideoSources(prev => [...prev, ...newSources]);
     }
@@ -54,7 +56,7 @@ export default function Home() {
     return () => {
       videoSources.forEach(source => URL.revokeObjectURL(source.url));
     };
-  }, [videoSources]);
+  }, []); // Remove videoSources from dependency to avoid premature URL revocation
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-background">
