@@ -67,7 +67,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
   const [previewActiveSource, setPreviewActiveSource] = useState(0);
   const [cutDuration, setCutDuration] = useState(2);
   const [sourceCutDurations, setSourceCutDurations] = useState<{[key: number]: number}>({});
-  const [nightVisionColor, setNightVisionColor] = useState('#00ff00'); // Default green
+  const [nightVisionColor, setNightVisionColor] = useState('#00ff00'); // Default green - matches the original hue-rotate(80deg) effect
 
   // State for new side panel features
   const [sourceScaleFactors, setSourceScaleFactors] = useState<{[key: number]: number}>({});
@@ -708,6 +708,13 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
   const getNightVisionStyle = (f: VideoFilter[]) => {
     if (!f || !f.includes('night-vision')) return {};
 
+    // Handle default night vision (original hue-rotate(80deg))
+    if (nightVisionColor === '#default') {
+      return {
+        filter: 'grayscale(100%) brightness(1.2) sepia(100%) hue-rotate(80deg) saturate(200%)'
+      };
+    }
+
     // Convert hex color to HSL for hue-rotate
     const hexToHsl = (hex: string) => {
       const r = parseInt(hex.slice(1, 3), 16) / 255;
@@ -928,7 +935,16 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                         <div className="space-y-2 mt-4">
                             <Label className="text-sm font-medium">Night Vision Color</Label>
                             <div className="flex items-center gap-3">
-                                <div className="flex gap-2">
+                                <div className="flex gap-2 flex-wrap">
+                                    <Button
+                                        variant={nightVisionColor === '#default' ? 'default' : 'outline'}
+                                        size="sm"
+                                        onClick={() => setNightVisionColor('#default')}
+                                        className="text-xs px-3 py-1 h-8"
+                                        title="Use original night vision color"
+                                    >
+                                        Default
+                                    </Button>
                                     {[
                                         { color: '#00ff00', name: 'Green' },
                                         { color: '#0000ff', name: 'Blue' },
@@ -955,7 +971,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                                     <input
                                         id="custom-color"
                                         type="color"
-                                        value={nightVisionColor}
+                                        value={nightVisionColor.startsWith('#') && nightVisionColor !== '#default' ? nightVisionColor : '#00ff00'}
                                         onChange={(e) => setNightVisionColor(e.target.value)}
                                         className="w-8 h-8 rounded cursor-pointer border border-border"
                                         title="Custom color picker"
@@ -963,7 +979,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                                 </div>
                             </div>
                             <p className="text-xs text-muted-foreground">
-                                Choose a color for the night vision effect. Changes apply instantly to the preview.
+                                Choose a color for the night vision effect. "Default" uses the original night vision appearance. Changes apply instantly to the preview.
                             </p>
                         </div>
                     )}
