@@ -922,6 +922,15 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
     }
   };
 
+  const getPaddingBottom = (ar: AspectRatio) => {
+    switch(ar) {
+        case '9:16': return (16/9 * 100);
+        case '1:1': return 100;
+        case '16:9': return (9/16 * 100);
+        default: return (16/9 * 100);
+    }
+  };
+
   const currentPreviewIcon = isPreviewPlaying ? <Pause /> : <Play />;
   const newClip = { // Used for audio upload logic
       id: -1,
@@ -1055,8 +1064,8 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
               />
             </div>
           </div>
-          <div className="flex justify-start">
-            <div ref={videoWrapperRef} className={cn("bg-black/90 backdrop-blur-sm rounded-xl overflow-hidden transition-all duration-300 shadow-2xl border border-border/20 relative", getAspectRatioClass(aspectRatio))} style={{ width: `${previewSize}%`, maxHeight: '60vh' }}>
+          <div className="flex justify-center">
+            <div ref={videoWrapperRef} className={cn("bg-black/90 backdrop-blur-sm rounded-xl overflow-hidden transition-all duration-300 shadow-2xl border border-border/20 relative")} style={{ width: `${previewSize}%`, paddingBottom: `${getPaddingBottom(aspectRatio)}%`, height: 0 }}>
               <div className={cn("relative w-full h-full", getFilterClass(activeFilters))} style={getNightVisionStyle(activeFilters)}>
               {videoSources.map((source, index) => {
                 const isVisible = isPreviewPlaying && activeClipForPreview?.cuts
