@@ -288,7 +288,7 @@ export default function ClipList({
       });
     }));
 
-    // Audio processing - pre-render continuous audio for all cuts
+    // Audio processing - pre-render audio for all cuts
     let continuousAudioBuffer: AudioBuffer | null = null;
     if (clip.overlayAudioUrl) {
       const audioProcessor = new AudioProcessor();
@@ -296,9 +296,16 @@ export default function ClipList({
 
       const cuts = clip.cuts || [{ sourceVideo: clip.sourceVideo, start: clip.start, end: clip.end }];
       const totalDuration = cuts.reduce((acc, cut) => acc + (cut.end - cut.start), 0);
-      continuousAudioBuffer = audioProcessor.renderContinuousAudio(cuts, totalDuration);
 
-      console.log(`Pre-rendered continuous audio: ${totalDuration.toFixed(2)}s, ${continuousAudioBuffer ? continuousAudioBuffer.length : 0} samples`);
+      // For single clips, extract the trimmed audio chunk; for multi-cut, render continuous audio
+      if (cuts.length === 1) {
+        const singleCut = cuts[0];
+        continuousAudioBuffer = audioProcessor.getAudioChunk(singleCut.start, singleCut.end - singleCut.start);
+        console.log(`Pre-rendered trimmed audio for single clip: ${singleCut.start.toFixed(2)}-${singleCut.end.toFixed(2)}s, ${continuousAudioBuffer ? continuousAudioBuffer.length : 0} samples`);
+      } else {
+        continuousAudioBuffer = audioProcessor.renderContinuousAudio(cuts, totalDuration);
+        console.log(`Pre-rendered continuous audio for multi-cut: ${totalDuration.toFixed(2)}s, ${continuousAudioBuffer ? continuousAudioBuffer.length : 0} samples`);
+      }
 
       audioProcessor.destroy();
     }
@@ -542,7 +549,8 @@ export default function ClipList({
       await new Promise(res => mainAudioElement.oncanplaythrough = res);
       const mainAudioSourceNode = audioContext.createMediaElementSource(mainAudioElement);
       mainAudioSourceNode.connect(mainAudioDestination);
-      mainAudioElement.currentTime = 0;
+      // For single clips, start audio at clip start time; for multi-cut, play from beginning (continuous)
+      mainAudioElement.currentTime = clip.cuts ? 0 : clip.start;
       mainAudioElement.play().catch(e => console.warn('Audio playback failed:', e));
     }
 

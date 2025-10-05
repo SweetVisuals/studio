@@ -745,7 +745,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
       console.log(`Cut duration: ${cutDuration}s`);
 
       const clipDuration = sourceCutDurations[activeVideoIndex] || cutDuration;
-      const numClips = Math.floor(videoDuration / clipDuration);
+      const numClips = Math.min(Math.floor(videoDuration / clipDuration), 25);
 
       if (numClips === 0) {
         throw new Error(`Video is too short for clips of ${clipDuration} seconds. Please reduce the cut duration or use a longer video.`);
@@ -1050,7 +1050,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
               />
             </div>
           </div>
-          <div className="flex-1 flex justify-center">
+          <div className="flex justify-start">
             <div ref={videoWrapperRef} className={cn("bg-black/90 backdrop-blur-sm rounded-xl overflow-hidden transition-all duration-300 shadow-2xl border border-border/20 relative", getAspectRatioClass(aspectRatio))} style={{ width: `${previewSize}%`, height: 'auto' }}>
               <div className={cn("relative w-full h-full", getFilterClass(activeFilters))} style={getNightVisionStyle(activeFilters)}>
               {videoSources.map((source, index) => {
