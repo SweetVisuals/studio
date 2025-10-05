@@ -4,8 +4,9 @@ import { useState, useRef, useEffect, type ChangeEvent } from 'react';
 import Header from '@/components/clipit/header';
 import VideoUploader from '@/components/clipit/video-uploader';
 import VideoEditor from '@/components/clipit/video-editor';
+import { Globe } from '@/components/ui/globe';
 
-export type VideoFilter = 'none' | 'bw' | 'night-vision' | 'vhs';
+export type VideoFilter = 'none' | 'bw' | 'night-vision' | 'vhs' | 'grain';
 export type AspectRatio = '9:16' | '1:1' | '16:9' | 'source';
 
 export type ClipCut = {
@@ -59,12 +60,25 @@ export default function Home() {
   }, []); // Remove videoSources from dependency to avoid premature URL revocation
 
   return (
-    <div className="flex min-h-screen w-full flex-col bg-background">
+    <div className="flex min-h-screen w-full flex-col bg-background relative overflow-hidden">
+      {/* Subtle background pattern for an OS-like feel */}
+      <div className="absolute inset-0 z-0 bg-dot-thick-neutral-800/50 dark:bg-dot-thick-neutral-200/50 pointer-events-none" />
+      <div className="absolute inset-0 z-0 bg-gradient-to-br from-background via-background to-secondary/20 opacity-90 pointer-events-none" />
+
+      {/* Magic UI Globe Background - only shown on initial load */}
+      {videoSources.length === 0 && (
+        <div className="fixed inset-0 -z-10 opacity-20">
+          <Globe className="scale-75" />
+        </div>
+      )}
+
       <Header />
-      <main className="flex-1 px-4 py-8 md:px-6">
-        <div className="mx-auto max-w-7xl">
+      <main className="relative z-10 flex flex-1 overflow-hidden p-2 md:p-4">
+        <div className="w-full h-full flex flex-col rounded-xl border border-border/50 bg-card/50 shadow-2xl backdrop-blur-xl overflow-hidden">
           {videoSources.length === 0 ? (
-            <VideoUploader onVideoUpload={handleVideoUpload} multiple />
+            <div className="flex-1 flex items-center justify-center p-4">
+              <VideoUploader onVideoUpload={handleVideoUpload} multiple />
+            </div>
           ) : (
             <VideoEditor videoSources={videoSources} onVideoUpload={handleVideoUpload} onRemoveSource={handleRemoveSource} />
           )}
