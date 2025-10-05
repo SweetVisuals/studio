@@ -7,11 +7,13 @@ import {
   CardContent,
 } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
-import { Download, Play, Trash2, Film, Ratio, AudioWaveform, VolumeX, Video, Copy, Wand2, Pause } from 'lucide-react';
+import { Download, Play, Trash2, Film, Ratio, AudioWaveform, VolumeX, Video, Copy, Wand2, Pause, Edit, Save, X, ChevronDown, ChevronUp } from 'lucide-react';
 import type { Clip, VideoFilter, AspectRatio, VideoSource, ClipCut } from '@/app/page';
 import { useToast } from '@/hooks/use-toast';
 import { formatTime } from '@/lib/utils';
 import { Input } from '../ui/input';
+import { Label } from '@/components/ui/label';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   checkWebCodecsSupport,
   getVideoEncoderConfig,
@@ -51,6 +53,8 @@ export default function ClipList({
 }) {
   const [exportingClipId, setExportingClipId] = useState<number | null>(null);
   const [exportProgress, setExportProgress] = useState(0);
+  const [expandedClipId, setExpandedClipId] = useState<number | null>(null);
+  const [editingClip, setEditingClip] = useState<Clip | null>(null);
 
   const { toast } = useToast();
 
@@ -100,6 +104,67 @@ export default function ClipList({
         return remainingClips;
     });
     toast({ title: 'Clip removed.'});
+  };
+
+  const toggleClipExpansion = (clip: Clip) => {
+    if (expandedClipId === clip.id) {
+      // Collapsing - save if there are changes
+      if (editingClip) {
+        saveClipEdits();
+      }
+      setExpandedClipId(null);
+      setEditingClip(null);
+    } else {
+      // Expanding - start editing
+      setExpandedClipId(clip.id);
+      setEditingClip({ ...clip }); // Create a copy for editing
+    }
+  };
+
+  const saveClipEdits = () => {
+    if (!editingClip) return;
+
+    // Validate cuts
+    if (editingClip.cuts) {
+      for (let i = 0; i < editingClip.cuts.length; i++) {
+        const cut = editingClip.cuts[i];
+        if (cut.start >= cut.end) {
+          toast({ variant: 'destructive', title: 'Invalid cut times', description: `Cut ${i + 1}: Start time must be before end time.` });
+          return;
+        }
+        if (i > 0 && cut.start < editingClip.cuts[i - 1].end) {
+          toast({ variant: 'destructive', title: 'Overlapping cuts', description: `Cut ${i + 1} starts before cut ${i} ends.` });
+          return;
+        }
+      }
+    } else {
+      if (editingClip.start >= editingClip.end) {
+        toast({ variant: 'destructive', title: 'Invalid times', description: 'Start time must be before end time.' });
+        return;
+      }
+    }
+
+    setClips(prev => prev.map(c => c.id === editingClip.id ? editingClip : c));
+    toast({ title: 'Clip updated', description: 'Cut times have been saved.' });
+  };
+
+  const updateSingleClipTimes = (start: number, end: number) => {
+    if (!editingClip) return;
+    setEditingClip({
+      ...editingClip,
+      start,
+      end
+    });
+  };
+
+  const updateCutTime = (cutIndex: number, field: 'start' | 'end', value: number) => {
+    if (!editingClip || !editingClip.cuts) return;
+    const updatedCuts = [...editingClip.cuts];
+    updatedCuts[cutIndex] = { ...updatedCuts[cutIndex], [field]: value };
+    setEditingClip({
+      ...editingClip,
+      cuts: updatedCuts
+    });
   };
 
   const getFilterString = (filters: VideoFilter[]): string => {
@@ -621,6 +686,9 @@ export default function ClipList({
                     <Button variant="outline" size="sm" className="h-7 px-2" onClick={() => onPreview(clip)}>
                       {isPreviewing && activePreviewClipId === clip.id ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
                     </Button>
+                    <Button variant="outline" size="sm" className="h-7 px-2" onClick={() => toggleClipExpansion(clip)}>
+                      {expandedClipId === clip.id ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                    </Button>
                     <Button variant="default" size="sm" className="h-7 px-2" onClick={() => exportClip(clip)}>
                       <Download className="h-3 w-3" />
                     </Button>
@@ -634,11 +702,97 @@ export default function ClipList({
                     </Button>
                   </div>
                 </div>
+
+                {/* Expandable Edit Section */}
+                <Collapsible open={expandedClipId === clip.id} onOpenChange={() => toggleClipExpansion(clip)}>
+                  <CollapsibleContent className="pt-4 border-t border-border/50 mt-3">
+                    <div className="space-y-4">
+                      {editingClip && !editingClip.cuts ? (
+                        // Single clip editing
+                        <div className="space-y-4">
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <Label htmlFor="edit-start" className="text-sm font-medium">Start Time (s)</Label>
+                              <Input
+                                id="edit-start"
+                                type="number"
+                                step="0.1"
+                                min="0"
+                                value={editingClip.start.toFixed(2)}
+                                onChange={(e) => updateSingleClipTimes(parseFloat(e.target.value) || 0, editingClip.end)}
+                                className="bg-secondary/50"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor="edit-end" className="text-sm font-medium">End Time (s)</Label>
+                              <Input
+                                id="edit-end"
+                                type="number"
+                                step="0.1"
+                                min={editingClip.start}
+                                value={editingClip.end.toFixed(2)}
+                                onChange={(e) => updateSingleClipTimes(editingClip.start, parseFloat(e.target.value) || 0)}
+                                className="bg-secondary/50"
+                              />
+                            </div>
+                          </div>
+                          <div className="text-sm text-muted-foreground">
+                            Duration: {formatTime(editingClip.end - editingClip.start)}
+                          </div>
+                        </div>
+                      ) : editingClip?.cuts ? (
+                        // Multi-cut editing
+                        <div className="space-y-4 max-h-96 overflow-y-auto">
+                          <div className="text-sm text-muted-foreground mb-2">
+                            Total Duration: {formatTime(editingClip.cuts.reduce((acc, cut) => acc + (cut.end - cut.start), 0))}
+                          </div>
+                          {editingClip.cuts.map((cut, index) => (
+                            <div key={index} className="border rounded-lg p-3 space-y-3">
+                              <div className="flex items-center justify-between">
+                                <h4 className="text-sm font-medium">Cut {index + 1} - Source {cut.sourceVideo + 1}</h4>
+                                <span className="text-xs text-muted-foreground">
+                                  {formatTime(cut.end - cut.start)}
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1">
+                                  <Label htmlFor={`cut-${index}-start`} className="text-xs">Start (s)</Label>
+                                  <Input
+                                    id={`cut-${index}-start`}
+                                    type="number"
+                                    step="0.1"
+                                    min="0"
+                                    value={cut.start.toFixed(2)}
+                                    onChange={(e) => updateCutTime(index, 'start', parseFloat(e.target.value) || 0)}
+                                    className="h-8 text-xs bg-secondary/50"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label htmlFor={`cut-${index}-end`} className="text-xs">End (s)</Label>
+                                  <Input
+                                    id={`cut-${index}-end`}
+                                    type="number"
+                                    step="0.1"
+                                    min={cut.start}
+                                    value={cut.end.toFixed(2)}
+                                    onChange={(e) => updateCutTime(index, 'end', parseFloat(e.target.value) || 0)}
+                                    className="h-8 text-xs bg-secondary/50"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
                 </CardContent>
             )}
           </Card>
         ))}
       </div>
+
     </div>
   );
 }

@@ -91,6 +91,9 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
   const [exportQuality, setExportQuality] = useState<'low' | 'medium' | 'high'>('high');
   const [exportFrameRate, setExportFrameRate] = useState<24 | 30 | 60>(30);
 
+  // State for preview size
+  const [previewSize, setPreviewSize] = useState(100);
+
   // State to track dynamic styles for scale application
   const [videoStyles, setVideoStyles] = useState<{[key: number]: any}>({});
 
@@ -904,6 +907,18 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
               <Play className="h-5 w-5 text-primary" /> Video Preview
             </h3>
             <div className="flex gap-2">
+              <Select value={previewSize.toString()} onValueChange={(v) => setPreviewSize(parseInt(v))}>
+                <SelectTrigger className="w-20 h-8 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="100">100%</SelectItem>
+                  <SelectItem value="75">75%</SelectItem>
+                  <SelectItem value="50">50%</SelectItem>
+                  <SelectItem value="25">25%</SelectItem>
+                  <SelectItem value="10">10%</SelectItem>
+                </SelectContent>
+              </Select>
               <Button
                 variant="outline"
                 size="sm"
@@ -952,8 +967,9 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
               />
             </div>
           </div>
-          <div ref={videoWrapperRef} className={cn("w-full flex-1 mx-auto bg-black/90 backdrop-blur-sm rounded-xl overflow-hidden transition-all duration-300 shadow-2xl border border-border/20 relative", getAspectRatioClass(aspectRatio))}>
-            <div className={cn("relative w-full h-full", getFilterClass(activeFilters))} style={getNightVisionStyle(activeFilters)}>
+          <div className="flex-1 flex justify-center">
+            <div ref={videoWrapperRef} className={cn("bg-black/90 backdrop-blur-sm rounded-xl overflow-hidden transition-all duration-300 shadow-2xl border border-border/20 relative", getAspectRatioClass(aspectRatio))} style={{ width: `${previewSize}%`, height: 'auto' }}>
+              <div className={cn("relative w-full h-full", getFilterClass(activeFilters))} style={getNightVisionStyle(activeFilters)}>
               {videoSources.map((source, index) => {
                 const isVisible = isPreviewPlaying && activeClipForPreview?.cuts
                   ? index === activeClipForPreview.cuts[currentCutIndex]?.sourceVideo
@@ -982,6 +998,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
               {activeFilters && activeFilters.includes('grain') && <div className="grain-overlay" style={{ opacity: grainIntensity / 100 }}></div>}
             </div>
           </div>
+        </div>
           <div className="space-y-3 mt-4">
             <Slider
               min={0}
@@ -1016,7 +1033,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
 
             <div className="flex-1 overflow-y-auto pr-2 -mr-2"> {/* Added negative margin to counteract scrollbar padding */}
               <TabsContent value="clip-settings" className="space-y-6">
-                <Accordion type="single" collapsible className="w-full">
+                <Accordion type="multiple" defaultValue={["item-1", "item-2", "item-3"]} collapsible className="w-full">
                   <AccordionItem value="item-1">
                     <AccordionTrigger className="text-base font-semibold text-foreground/90 hover:no-underline">
                       <div className="flex items-center gap-2">
@@ -1167,7 +1184,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
               </TabsContent>
 
               <TabsContent value="source-management" className="space-y-6">
-                <Accordion type="single" collapsible className="w-full">
+                <Accordion type="multiple" defaultValue={["item-1", "item-2"]} collapsible className="w-full">
                   <AccordionItem value="item-1">
                     <AccordionTrigger className="text-base font-semibold text-foreground/90 hover:no-underline">
                       <div className="flex items-center gap-2">
@@ -1265,7 +1282,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
               </TabsContent>
 
               <TabsContent value="audio-export" className="space-y-6">
-                <Accordion type="single" collapsible className="w-full">
+                <Accordion type="multiple" defaultValue={["item-1", "item-2"]} collapsible className="w-full">
                   <AccordionItem value="item-1">
                     <AccordionTrigger className="text-base font-semibold text-foreground/90 hover:no-underline">
                       <div className="flex items-center gap-2">
