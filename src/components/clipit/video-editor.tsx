@@ -200,11 +200,15 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
     if (!video || !videoSources[activeVideoIndex]) return;
 
     const handleMetadata = () => {
-        setDuration(video.duration);
-        if (activeVideoIndex === 0 && clips.length === 0) {
-            setEnd(Math.min(15, video.duration));
-        }
-    };
+         setDuration(video.duration);
+         if (activeVideoIndex === 0 && clips.length === 0) {
+             setEnd(Math.min(15, video.duration));
+         }
+         // Seek to current time and clamp if necessary
+         const clampedTime = Math.min(currentTime, video.duration);
+         setCurrentTime(clampedTime);
+         video.currentTime = clampedTime;
+     };
 
     video.addEventListener('loadedmetadata', handleMetadata);
 
@@ -1074,7 +1078,6 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                       zIndex: isVisible ? 1 : 0
                     }}
                     controls={false}
-                    crossOrigin="anonymous"
                     playsInline
                     preload="auto"
                     src={source.url}
