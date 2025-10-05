@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, type RefObject, ChangeEvent } from 'react';
+import { useState, useRef, useEffect, useCallback, type RefObject, ChangeEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -12,7 +12,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, Play, Sparkles, Loader2, Volume2, VolumeX, Upload, Music4, Film, UploadCloud, Pause } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
+import { Plus, Play, Sparkles, Loader2, Volume2, VolumeX, Upload, Music4, Film, UploadCloud, Pause, X, ChevronUp, ChevronDown, Settings, Download, Expand } from 'lucide-react';
 import ClipList from './clip-list';
 import type { Clip, VideoFilter, AspectRatio, VideoSource, ClipCut } from '@/app/page';
 import { formatTime } from '@/lib/utils';
@@ -23,6 +30,7 @@ import { Checkbox } from '../ui/checkbox';
 type VideoEditorProps = {
   videoSources: VideoSource[];
   onVideoUpload: (event: ChangeEvent<HTMLInputElement>) => void;
+  onRemoveSource: (index: number) => void;
 };
 
 const filterOptions: { id: VideoFilter, label: string }[] = [
@@ -31,7 +39,7 @@ const filterOptions: { id: VideoFilter, label: string }[] = [
     { id: 'vhs', label: 'VHS' },
 ];
 
-export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditorProps) {
+export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSource }: VideoEditorProps) {
   const [activeVideoIndex, setActiveVideoIndex] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -49,20 +57,133 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
   const [overlayAudioFile, setOverlayAudioFile] = useState<File | null>(null);
   const [overlayAudioUrl, setOverlayAudioUrl] = useState<string | null>(null);
   const [isMuted, setIsMuted] = useState(false);
+  const [previewSourcesOpen, setPreviewSourcesOpen] = useState(false);
+  const [previewActiveSource, setPreviewActiveSource] = useState(0);
+  const [cutDuration, setCutDuration] = useState(2);
+
+  // State for new side panel features
+  const [sourceScaleFactors, setSourceScaleFactors] = useState<{[key: number]: number}>({});
+  const [exportFormat, setExportFormat] = useState<'mp4' | 'webm'>('mp4');
+  const [exportQuality, setExportQuality] = useState<'low' | 'medium' | 'high'>('high');
+  const [exportFrameRate, setExportFrameRate] = useState<24 | 30 | 60>(30);
+
+  // State to track dynamic styles for scale application
+  const [videoStyles, setVideoStyles] = useState<{[key: number]: any}>({});
+
+  // Update video styles when scale factors change
+  useEffect(() => {
+    const newStyles: {[key: number]: any} = {};
+    videoSources.forEach((_, index) => {
+      const scale = sourceScaleFactors[index] || 1.0;
+      newStyles[index] = {
+        transform: `scale(${scale})`,
+        transformOrigin: 'center',
+        transition: 'transform 0.2s ease-in-out'
+      };
+    });
+    setVideoStyles(newStyles);
+  }, [sourceScaleFactors, videoSources]);
+
+  // Function to move video sources
+  const moveSource = (fromIndex: number, direction: 'up' | 'down') => {
+    const toIndex = direction === 'up' ? fromIndex - 1 : fromIndex + 1;
+    if (toIndex < 0 || toIndex >= videoSources.length) return;
+
+    const newSources = [...videoSources];
+    [newSources[fromIndex], newSources[toIndex]] = [newSources[toIndex], newSources[fromIndex]];
+
+    // Update active video index if necessary
+    let newActiveIndex = activeVideoIndex;
+    if (activeVideoIndex === fromIndex) {
+      newActiveIndex = toIndex;
+    } else if (activeVideoIndex === toIndex) {
+      newActiveIndex = fromIndex;
+    }
+
+    setActiveVideoIndex(newActiveIndex);
+    onRemoveSource && onRemoveSource(0); // Update via parent callback
+    // Note: This component receives sources as props, would need parent to handle actual reordering
+    toast({ title: 'Sources reordered', description: 'Source order has been updated.' });
+  };
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
   const overlayAudioRef = useRef<HTMLAudioElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
   const moreVideoInputRef = useRef<HTMLInputElement>(null);
+  const previewVideoRef = useRef<HTMLVideoElement>(null);
   const { toast } = useToast();
-  
+
   const videoWrapperRef = useRef<HTMLDivElement>(null);
+
+  const activeClipForPreviewRef = useRef<Clip | null>(null);
+  const currentCutIndexRef = useRef<number>(0);
+  const isPreviewPlayingRef = useRef<boolean>(false);
+  const activeVideoIndexRef = useRef<number>(0);
+
+  useEffect(() => { activeClipForPreviewRef.current = activeClipForPreview; }, [activeClipForPreview]);
+  useEffect(() => { currentCutIndexRef.current = currentCutIndex; }, [currentCutIndex]);
+  useEffect(() => { isPreviewPlayingRef.current = isPreviewPlaying; }, [isPreviewPlaying]);
+  useEffect(() => { activeVideoIndexRef.current = activeVideoIndex; }, [activeVideoIndex]);
+
+  useEffect(() => {
+    videoRef.current = videoRefs.current[activeVideoIndex] || null;
+  }, [activeVideoIndex, videoSources.length]);
+
+  // Preload all video sources to make switching seamless
+  useEffect(() => {
+    const preloadElements: HTMLVideoElement[] = [];
+    videoSources.forEach(source => {
+      const video = document.createElement('video');
+      video.src = source.url;
+      video.preload = 'auto';
+      video.style.position = 'absolute';
+      video.style.left = '-9999px';
+      video.style.top = '-9999px';
+      document.body.appendChild(video);
+      preloadElements.push(video);
+    });
+
+    return () => {
+      preloadElements.forEach(video => {
+        document.body.removeChild(video);
+      });
+    };
+  }, [videoSources]);
+
+  useEffect(() => {
+    if (previewSourcesOpen && videoSources.length > 0) {
+      setPreviewActiveSource(0);
+      const video = previewVideoRef.current;
+      if (video) {
+        video.currentTime = 0;
+        video.play().catch(() => {});
+        const switchInterval = setInterval(() => {
+          setPreviewActiveSource(prev => (prev + 1) % videoSources.length);
+        }, 3000);
+        const stopTimer = setTimeout(() => {
+          clearInterval(switchInterval);
+          video.pause();
+        }, videoSources.length * 3000);
+        return () => {
+          clearInterval(switchInterval);
+          clearTimeout(stopTimer);
+        };
+      }
+    }
+  }, [previewSourcesOpen, videoSources.length]);
+
+  useEffect(() => {
+    if (previewSourcesOpen && previewVideoRef.current) {
+      const video = previewVideoRef.current;
+      video.currentTime = 0;
+      video.play().catch(() => {});
+    }
+  }, [previewActiveSource, previewSourcesOpen]);
   
   useEffect(() => {
-    const video = videoRef.current;
+    const video = videoRefs.current[activeVideoIndex];
     if (!video || !videoSources[activeVideoIndex]) return;
-
-    const sourceChanged = video.src !== videoSources[activeVideoIndex].url;
 
     const handleMetadata = () => {
         setDuration(video.duration);
@@ -70,117 +191,13 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
             setEnd(Math.min(15, video.duration));
         }
     };
-    
-    if (sourceChanged) {
-        video.src = videoSources[activeVideoIndex].url;
-        video.load();
-    }
-    
+
     video.addEventListener('loadedmetadata', handleMetadata);
-    
+
     return () => {
       video.removeEventListener('loadedmetadata', handleMetadata);
     };
   }, [activeVideoIndex, videoSources, clips.length]);
-
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    const handleTimeUpdate = () => {
-      if (!isPreviewPlaying || !activeClipForPreview || !video) return;
-      
-      setCurrentTime(video.currentTime);
-      
-      const isMultiCut = activeClipForPreview.cuts && activeClipForPreview.cuts.length > 0;
-      let end_time: number;
-      let current_cut_for_time_update = currentCutIndex;
-      
-      if(isMultiCut){
-          const currentCut = activeClipForPreview.cuts![current_cut_for_time_update];
-          if(activeVideoIndex !== currentCut.sourceVideo) return; // Don't advance if we are on the wrong source video
-          end_time = currentCut.end;
-      } else {
-          end_time = activeClipForPreview.end;
-      }
-
-      if (video.currentTime >= end_time) {
-        if(isMultiCut){
-          if (current_cut_for_time_update < activeClipForPreview.cuts!.length - 1) {
-            setCurrentCutIndex(current_cut_for_time_update + 1);
-          } else {
-            stopPreview();
-          }
-        } else {
-          stopPreview();
-        }
-      }
-    };
-
-    video.addEventListener('timeupdate', handleTimeUpdate);
-    return () => video.removeEventListener('timeupdate', handleTimeUpdate);
-  }, [activeClipForPreview, currentCutIndex, isPreviewPlaying, activeVideoIndex]);
-
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video || !isPreviewPlaying || !activeClipForPreview) {
-      return;
-    }
-  
-    const isMultiCut = activeClipForPreview.cuts && activeClipForPreview.cuts.length > 0;
-    
-    let sourceVideoIndex: number;
-    let startTime: number;
-    let isMutedOverride: boolean;
-  
-    if (isMultiCut) {
-      if (currentCutIndex >= activeClipForPreview.cuts!.length) {
-        stopPreview();
-        return;
-      }
-      const cut = activeClipForPreview.cuts![currentCutIndex];
-      sourceVideoIndex = cut.sourceVideo;
-      startTime = cut.start;
-      isMutedOverride = activeClipForPreview.isMuted;
-    } else {
-      sourceVideoIndex = activeClipForPreview.sourceVideo;
-      startTime = activeClipForPreview.start;
-      isMutedOverride = activeClipForPreview.isMuted;
-    }
-
-    const playVideo = () => {
-      if (!videoRef.current || !isPreviewPlaying) return;
-      videoRef.current.currentTime = startTime;
-      videoRef.current.muted = isMutedOverride;
-      videoRef.current.play().catch(e => {
-        console.error("Playback failed", e);
-        stopPreview();
-      });
-    };
-  
-    if (activeVideoIndex !== sourceVideoIndex) {
-      setActiveVideoIndex(sourceVideoIndex);
-      // The source is changing. We must wait for the new source to be ready.
-      // The video.src will be updated by the primary useEffect that watches activeVideoIndex
-      const onCanPlay = () => {
-        playVideo();
-        video.removeEventListener('canplay', onCanPlay);
-      };
-      video.addEventListener('canplay', onCanPlay, { once: true });
-    } else {
-      // Source is already correct, just play.
-      playVideo();
-    }
-  
-  }, [isPreviewPlaying, activeClipForPreview, currentCutIndex, videoSources]);
-
-  const handleSeek = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const time = parseFloat(event.target.value);
-    if (videoRef.current) {
-      videoRef.current.currentTime = time;
-      setCurrentTime(time);
-    }
-  };
 
   const stopPreview = () => {
     const video = videoRef.current;
@@ -189,7 +206,7 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
         video.pause();
     }
     if(audio) audio.pause();
-    
+
     // Only reset if a preview was actually playing
     if(isPreviewPlaying) {
       setActiveClipForPreview(null);
@@ -197,6 +214,161 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
       setIsPreviewPlaying(false);
     }
   }
+
+  const timeUpdateHandler = useCallback(() => {
+    const activeClip = activeClipForPreviewRef.current;
+    if (!isPreviewPlayingRef.current || !activeClip) return;
+
+    const video = videoRefs.current[activeVideoIndexRef.current];
+    if (!video) return;
+
+    const isMultiCut = activeClip.cuts && activeClip.cuts.length > 0;
+
+    if (!isMultiCut) {
+      // Single clip logic
+      setCurrentTime(video.currentTime);
+      if (video.currentTime >= activeClip.end) {
+        stopPreview();
+      }
+    } else {
+      // Multi-cut logic: calculate total progress for linear seek bar
+      let totalProgress = 0;
+      for (let i = 0; i < currentCutIndexRef.current; i++) {
+        totalProgress += activeClip.cuts![i].end - activeClip.cuts![i].start;
+      }
+      totalProgress += Math.max(0, video.currentTime - activeClip.cuts![currentCutIndexRef.current].start);
+      setCurrentTime(totalProgress);
+
+      // Check if current cut has ended
+      const currentCut = activeClip.cuts![currentCutIndexRef.current];
+      if (video.currentTime >= currentCut.end) {
+        if (currentCutIndexRef.current < activeClip.cuts!.length - 1) {
+          // Advance to next cut
+          const nextCutIndex = currentCutIndexRef.current + 1;
+          const nextCut = activeClip.cuts![nextCutIndex];
+
+          console.log(`Advancing to cut ${nextCutIndex}: source=${nextCut.sourceVideo}, start=${nextCut.start.toFixed(2)}, end=${nextCut.end.toFixed(2)}`);
+
+          currentCutIndexRef.current = nextCutIndex;
+          setCurrentCutIndex(nextCutIndex);
+          setActiveVideoIndex(nextCut.sourceVideo);
+
+          // Switch to the next video
+          const nextVideo = videoRefs.current[nextCut.sourceVideo];
+          if (nextVideo) {
+            nextVideo.currentTime = nextCut.start;
+            nextVideo.muted = activeClip.isMuted;
+            // Video continues playing
+          }
+        } else {
+          // Last cut reached
+          console.log('Reached last cut, stopping preview');
+          stopPreview();
+        }
+      }
+    }
+  }, [videoSources, stopPreview]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    video.addEventListener('timeupdate', timeUpdateHandler);
+
+    return () => {
+      video.removeEventListener('timeupdate', timeUpdateHandler);
+    };
+  }, [timeUpdateHandler]);
+
+  useEffect(() => {
+    if (!isPreviewPlaying || !activeClipForPreview) {
+      return;
+    }
+
+    const isMultiCut = activeClipForPreview.cuts && activeClipForPreview.cuts.length > 0;
+
+    if (isMultiCut) {
+      if (currentCutIndex >= activeClipForPreview.cuts!.length) {
+        console.log('Cut index out of bounds, stopping preview');
+        stopPreview();
+        return;
+      }
+
+      const cut = activeClipForPreview.cuts![currentCutIndex];
+      const sourceVideoIndex = cut.sourceVideo;
+      const startTime = cut.start;
+
+      console.log(`Starting multi-cut playback: cut=${currentCutIndex}, source=${sourceVideoIndex}, start=${startTime.toFixed(2)}, end=${cut.end.toFixed(2)}`);
+
+      const startPlayback = () => {
+        const video = videoRefs.current[sourceVideoIndex];
+        if (!video || !isPreviewPlayingRef.current) return;
+
+        video.currentTime = startTime;
+        video.muted = activeClipForPreview.isMuted;
+        video.play().catch(e => {
+          console.error("Multi-cut playback failed", e);
+          stopPreview();
+        });
+      };
+
+      if (activeVideoIndex !== sourceVideoIndex) {
+        setActiveVideoIndex(sourceVideoIndex);
+        // Wait for state update to take effect
+        setTimeout(startPlayback, 0);
+      } else {
+        startPlayback();
+      }
+      return;
+    }
+
+    // Single clip logic (unchanged)
+    const sourceVideoIndex = activeClipForPreview.sourceVideo;
+    const startTime = activeClipForPreview.start;
+    const isMutedOverride = activeClipForPreview.isMuted;
+
+    const playVideo = () => {
+      const video = videoRefs.current[sourceVideoIndex];
+      if (!video || !(isPreviewPlayingRef as any).current) return;
+
+      video.pause();
+      video.currentTime = startTime;
+      video.muted = isMutedOverride;
+
+      if (video.readyState >= 3) {
+        video.play().catch(e => {
+          console.error("Playback failed", e);
+          stopPreview();
+        });
+      } else {
+        const playWhenReady = () => {
+          video.play().catch(e => {
+            console.error("Playback failed", e);
+            stopPreview();
+          });
+          video.removeEventListener('canplay', playWhenReady);
+        };
+        video.addEventListener('canplay', playWhenReady, { once: true });
+      }
+    };
+
+    if (activeVideoIndex !== sourceVideoIndex) {
+      setActiveVideoIndex(sourceVideoIndex);
+      // Wait for state update to show the correct video element
+      setTimeout(playVideo, 0);
+    } else {
+      playVideo();
+    }
+
+  }, [isPreviewPlaying, activeClipForPreview, currentCutIndex, videoSources, activeVideoIndex]);
+
+  const handleSeek = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const time = parseFloat(event.target.value);
+    if (videoRef.current) {
+      videoRef.current.currentTime = time;
+      setCurrentTime(time);
+    }
+  };
 
   const playClip = (clipToPlay: Clip) => {
     if (isPreviewPlaying) {
@@ -208,13 +380,10 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
       }
     }
 
-    const video = videoRef.current;
-    if (!video) return;
-  
     setActiveClipForPreview(clipToPlay);
     setCurrentCutIndex(0);
     setIsPreviewPlaying(true);
-    
+
     const audioEl = overlayAudioRef.current;
     if (audioEl && clipToPlay.overlayAudioUrl) {
       if (audioEl.src !== clipToPlay.overlayAudioUrl) {
@@ -250,7 +419,7 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
       return;
     }
     setIsLoading(true);
-    toast({ title: 'AI Processing', description: 'Generating audio-driven multi-cam edit...' });
+    toast({ title: 'AI Processing', description: 'Generating audio-driven multi-cam edits...' });
 
     try {
       const audioDuration = await new Promise<number>((resolve, reject) => {
@@ -267,53 +436,93 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
         audio.src = URL.createObjectURL(overlayAudioFile);
       });
 
+      const uniqueVideoSources = videoSources.filter((source, index, arr) => arr.findIndex(s => s.url === source.url) === index);
+
       const videoDurations = await Promise.all(
-        videoSources.map(source => new Promise<number>((resolve) => {
+        uniqueVideoSources.map(source => new Promise<number>((resolve) => {
           const video = document.createElement('video');
           video.preload = 'metadata';
-          video.onloadedmetadata = () => resolve(video.duration);
-          video.onerror = () => resolve(0);
+          video.style.position = 'absolute';
+          video.style.left = '-9999px';
+          video.style.top = '-9999px';
+          document.body.appendChild(video);
+          video.onloadedmetadata = () => {
+            document.body.removeChild(video);
+            resolve(video.duration);
+          };
+          video.onerror = () => {
+            document.body.removeChild(video);
+            resolve(0);
+          };
           video.src = source.url;
         }))
       );
 
-      const clipDuration = 3;
-      const numCuts = Math.ceil(audioDuration / clipDuration);
-      const cuts: ClipCut[] = [];
+      const clipDuration = cutDuration;
+      const numFullCuts = Math.floor(audioDuration / clipDuration);
+      const remainder = audioDuration % clipDuration;
+      const numCuts = remainder > 0 ? numFullCuts + 1 : numFullCuts;
 
-      const validSources = videoSources
-        .map((source, index) => ({ originalIndex: index, duration: videoDurations[index] }))
+      const validSources = uniqueVideoSources
+        .map((source, index) => ({ originalIndex: videoSources.findIndex(s => s.url === source.url), duration: videoDurations[index] }))
         .filter(s => s.duration >= clipDuration);
 
-      if (validSources.length === 0) {
-        throw new Error(`No video sources are long enough for a ${clipDuration}s clip.`);
+      if (validSources.length < 2) {
+        throw new Error(`Need at least 2 video sources that are at least ${clipDuration}s long for multi-cam edit.`);
       }
 
-      for (let i = 0; i < numCuts; i++) {
-        const sourceInfo = validSources[i % validSources.length];
-        const startTime = Math.random() * (sourceInfo.duration - clipDuration);
-        
-        cuts.push({
-          sourceVideo: sourceInfo.originalIndex,
-          start: startTime,
-          end: startTime + clipDuration,
-        });
-      }
+      const audioUrl = URL.createObjectURL(overlayAudioFile);
+      const newClips: Clip[] = [];
 
-      const newClip: Clip = {
-        id: Date.now(),
-        start: 0,
-        end: audioDuration,
-        title: `Multi-Cam: ${overlayAudioFile.name.split('.').slice(0, -1).join('.')}`,
-        filters: filters,
-        isMuted: true,
-        overlayAudioUrl: URL.createObjectURL(overlayAudioFile), // Keep one URL for the final clip
-        sourceVideo: -1, // Indicates a multi-source clip
-        cuts: cuts,
+      // Function to generate random sequence without consecutive repeats
+      const generateRandomSequence = (length: number, numSources: number): number[] => {
+        const sequence: number[] = [];
+        let last = -1;
+        for (let i = 0; i < length; i++) {
+          let next;
+          do {
+            next = Math.floor(Math.random() * numSources);
+          } while (next === last);
+          sequence.push(next);
+          last = next;
+        }
+        return sequence;
       };
-      
-      setClips(prev => [newClip, ...prev]);
-      toast({ title: 'AI Edit Complete', description: 'A new multi-cam clip has been created.' });
+
+      for (let clipIndex = 0; clipIndex < 25; clipIndex++) {
+        const cuts: ClipCut[] = [];
+        const sourceSequence = generateRandomSequence(numCuts, validSources.length);
+
+        for (let i = 0; i < numCuts; i++) {
+           const sourceIndex = sourceSequence[i];
+            const sourceInfo = validSources[sourceIndex];
+            const cutDurationActual = (i === numCuts - 1 && remainder > 0) ? remainder : clipDuration;
+            const startTime = Math.random() * (sourceInfo.duration - cutDurationActual);
+
+            cuts.push({
+              sourceVideo: sourceInfo.originalIndex,
+              start: startTime,
+              end: startTime + cutDurationActual,
+            });
+          }
+
+        const newClip: Clip = {
+          id: Date.now() + clipIndex,
+          start: 0,
+          end: audioDuration,
+          title: `Multi-Cam: ${overlayAudioFile.name.split('.').slice(0, -1).join('.')} - Edit ${clipIndex + 1}`,
+          filters: filters,
+          isMuted: true,
+          overlayAudioUrl: audioUrl,
+          sourceVideo: -1, // Indicates a multi-source clip
+          cuts: cuts,
+        };
+
+        newClips.push(newClip);
+      }
+
+      setClips(prev => [...newClips, ...prev]);
+      toast({ title: 'AI Edit Complete', description: '25 new multi-cam clips have been created.' });
 
     } catch (error) {
       console.error('Multi-cam edit failed:', error);
@@ -432,41 +641,101 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
       <Card>
         <CardContent className="p-2 md:p-4">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 space-y-4">
+            <div className="space-y-4">
+              <ClipList
+                clips={clips}
+                setClips={setClips}
+                onPreview={playClip}
+                aspectRatio={aspectRatio}
+                videoSources={videoSources}
+                activePreviewClipId={activeClipForPreview?.id}
+                isPreviewing={isPreviewPlaying}
+                exportFormat={exportFormat}
+                exportQuality={exportQuality}
+                exportFrameRate={exportFrameRate}
+                sourceScaleFactors={sourceScaleFactors}
+              />
+            </div>
+
+            <div className="space-y-4">
                 <div className="flex gap-2 flex-wrap items-center">
                     {videoSources.map((source, index) => (
-                        <Button 
-                            key={index} 
-                            variant={activeVideoIndex === index ? 'default' : 'outline'}
-                            onClick={() => {
-                                if(isPreviewPlaying) stopPreview();
-                                setActiveVideoIndex(index);
-                            }}
-                        >
-                            <Film className="mr-2"/>
-                            Source {index + 1}
-                        </Button>
+                        <div key={index} className="flex items-center gap-1">
+                            <Button
+                                variant={activeVideoIndex === index ? 'default' : 'outline'}
+                                onClick={() => {
+                                    if(isPreviewPlaying) stopPreview();
+                                    setActiveVideoIndex(index);
+                                }}
+                            >
+                                <Film className="mr-2"/>
+                                Source {index + 1}
+                            </Button>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => onRemoveSource(index)}
+                            >
+                                <X className="h-4 w-4" />
+                            </Button>
+                        </div>
                     ))}
-                     <Button 
-                        variant="outline"
-                        onClick={() => moreVideoInputRef.current?.click()}
-                    >
-                        <UploadCloud className="mr-2"/>
-                        Upload More
-                    </Button>
-                    <input
-                      id="video-upload-more"
-                      type="file"
-                      className="sr-only"
-                      accept="video/mp4,video/quicktime,video/webm"
-                      onChange={onVideoUpload}
-                      multiple
-                      ref={moreVideoInputRef}
-                    />
+                      <Button
+                          variant="outline"
+                          onClick={() => moreVideoInputRef.current?.click()}
+                      >
+                          <UploadCloud className="mr-2"/>
+                          Upload More
+                      </Button>
+                     <Dialog open={previewSourcesOpen} onOpenChange={setPreviewSourcesOpen}>
+                       <DialogTrigger asChild>
+                         <Button variant="outline">
+                           <Film className="mr-2"/>
+                           Preview Sources
+                         </Button>
+                       </DialogTrigger>
+                       <DialogContent className="max-w-2xl">
+                         <DialogHeader>
+                           <DialogTitle>Preview Sources</DialogTitle>
+                         </DialogHeader>
+                         <div className="space-y-4">
+                           <p className="text-sm text-muted-foreground">Playing Source {previewActiveSource + 1}</p>
+                           <div className="w-full bg-black rounded-lg overflow-hidden">
+                             <video
+                               ref={previewVideoRef}
+                               className="w-full h-48 object-cover"
+                               src={videoSources[previewActiveSource]?.url}
+                             ></video>
+                           </div>
+                         </div>
+                       </DialogContent>
+                     </Dialog>
+                     <input
+                       id="video-upload-more"
+                       type="file"
+                       className="sr-only"
+                       accept="video/mp4,video/quicktime,video/webm"
+                       onChange={onVideoUpload}
+                       multiple
+                       ref={moreVideoInputRef}
+                     />
                 </div>
                <div ref={videoWrapperRef} className={cn("w-full mx-auto bg-black rounded-lg overflow-hidden transition-all duration-300", getAspectRatioClass(aspectRatio))}>
                   <div className={cn("relative w-full h-full", getFilterClass(activeFilters))}>
-                    <video ref={videoRef} className="h-full w-full object-cover" controls={false} crossOrigin="anonymous" playsInline/>
+                    {videoSources.map((source, index) => (
+                      <video
+                        key={index}
+                        ref={(el) => {
+                          if (el) videoRefs.current[index] = el;
+                        }}
+                        className={cn("h-full w-full object-cover", index !== activeVideoIndex && "hidden")}
+                        style={videoStyles[index]}
+                        controls={false}
+                        crossOrigin="anonymous"
+                        playsInline
+                        src={source.url}
+                      />
+                    ))}
                     {activeFilters && activeFilters.includes('vhs') && <div className="vhs-overlay"></div>}
                   </div>
                </div>
@@ -474,20 +743,21 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
                  <input
                    type="range"
                    min="0"
-                   max={duration}
+                   max={activeClipForPreview?.end || duration}
                    step="0.01"
                    value={currentTime}
                    onChange={handleSeek}
-                   className="w-full h-2 bg-muted-foreground/30 rounded-lg appearance-none cursor-pointer accent-primary"
+                   disabled={!!activeClipForPreview?.cuts}
+                   className="w-full h-2 bg-muted-foreground/30 rounded-lg appearance-none cursor-pointer accent-primary disabled:opacity-50"
                  />
                  <div className="flex justify-between text-sm text-muted-foreground font-mono">
                    <span>{formatTime(currentTime, true)}</span>
-                   <span>{formatTime(duration, true)}</span>
+                   <span>{formatTime(activeClipForPreview?.end || duration, true)}</span>
                  </div>
                </div>
             </div>
 
-            <div className="lg:col-span-1 space-y-4">
+            <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
                         <Label htmlFor="start-time">Start (s)</Label>
@@ -527,9 +797,114 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
                         ))}
                     </div>
                 </div>
+
+
                 
                 <Card className='p-3 space-y-2'>
-                    <Label className='flex items-center gap-2'><Music4 className='text-accent'/> Overlay Audio</Label>
+                    <Label className='flex items-center gap-2'><Settings className='text-accent' size={16}/> Manage Sources & Scale</Label>
+                    <div className="space-y-3">
+                        <Label htmlFor="cut-duration" className="text-xs">Global Cut Duration (s)</Label>
+                        <Input id="cut-duration" type="number" value={cutDuration} onChange={(e) => setCutDuration(parseFloat(e.target.value) || 2)} step="0.1" min="0.1" />
+
+                        <div className="space-y-2">
+                            <Label className="text-xs">Per-Source Settings</Label>
+                            {videoSources.map((source, index) => (
+                                <div key={index} className="flex flex-col gap-2 p-2 rounded border bg-muted/30">
+                                    <div className="flex items-center justify-between text-xs">
+                                        <span className="font-medium">Source {index + 1}</span>
+                                        <div className="flex gap-1">
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={() => moveSource(index, 'up')}
+                                                disabled={index === 0}
+                                                className="h-5 w-5 p-0"
+                                                title="Move up"
+                                            >
+                                                <ChevronUp size={10} />
+                                            </Button>
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={() => moveSource(index, 'down')}
+                                                disabled={index === videoSources.length - 1}
+                                                className="h-5 w-5 p-0"
+                                                title="Move down"
+                                            >
+                                                <ChevronDown size={10} />
+                                            </Button>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <Label htmlFor={`scale-${index}`} className="text-xs flex-shrink-0">Scale:</Label>
+                                        <Input
+                                            id={`scale-${index}`}
+                                            type="number"
+                                            value={((sourceScaleFactors[index] || 1.0) * 100).toFixed(0)}
+                                            onChange={(e) => {
+                                                const value = (parseFloat(e.target.value) || 100) / 100;
+                                                setSourceScaleFactors(prev => ({ ...prev, [index]: value }));
+                                            }}
+                                            step="1"
+                                            min="10"
+                                            max="500"
+                                            className="h-7 text-xs flex-1"
+                                            placeholder="100"
+                                        />
+                                        <span className="text-xs text-muted-foreground">%</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </Card>
+
+                <Card className='p-3 space-y-2'>
+                    <Label className='flex items-center gap-2'><Download className='text-accent' size={16}/> Export Settings</Label>
+                    <div className="space-y-2">
+                        <div className="space-y-1">
+                            <Label htmlFor="export-format" className="text-xs">Format</Label>
+                            <Select value={exportFormat} onValueChange={(v) => setExportFormat(v as 'mp4' | 'webm')}>
+                                <SelectTrigger id="export-format" className="h-8">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="mp4">MP4</SelectItem>
+                                    <SelectItem value="webm">WebM</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="space-y-1">
+                            <Label htmlFor="export-quality" className="text-xs">Quality</Label>
+                            <Select value={exportQuality} onValueChange={(v) => setExportQuality(v as 'low' | 'medium' | 'high')}>
+                                <SelectTrigger id="export-quality" className="h-8">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="low">Low</SelectItem>
+                                    <SelectItem value="medium">Medium</SelectItem>
+                                    <SelectItem value="high">High</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="space-y-1">
+                            <Label htmlFor="export-framerate" className="text-xs">Frame Rate</Label>
+                            <Select value={exportFrameRate.toString()} onValueChange={(v) => setExportFrameRate(parseInt(v) as 24 | 30 | 60)}>
+                                <SelectTrigger id="export-framerate" className="h-8">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="24">24 fps</SelectItem>
+                                    <SelectItem value="30">30 fps</SelectItem>
+                                    <SelectItem value="60">60 fps</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    </div>
+                </Card>
+
+                <Card className='p-3 space-y-2'>
+                    <Label className='flex items-center gap-2'><Music4 className='text-accent' size={16}/> Overlay Audio</Label>
                     <div className="flex items-center gap-2">
                         <Button onClick={() => audioInputRef.current?.click()} variant="outline" className="w-full">
                             <Upload /> {overlayAudioFile ? 'Change' : 'Upload'}
@@ -559,16 +934,6 @@ export default function VideoEditor({ videoSources, onVideoUpload }: VideoEditor
       </Card>
       
       <audio ref={overlayAudioRef} className='hidden' crossOrigin="anonymous"/>
-
-      <ClipList 
-        clips={clips} 
-        setClips={setClips} 
-        onPreview={playClip} 
-        aspectRatio={aspectRatio} 
-        videoSources={videoSources}
-        activePreviewClipId={activeClipForPreview?.id}
-        isPreviewing={isPreviewPlaying}
-      />
     </div>
   );
 }

@@ -45,6 +45,10 @@ export default function Home() {
     }
   };
 
+  const handleRemoveSource = (index: number) => {
+    setVideoSources(prev => prev.filter((_, i) => i !== index));
+  };
+
   useEffect(() => {
     // Cleanup the object URLs when the component unmounts
     return () => {
@@ -60,7 +64,7 @@ export default function Home() {
           {videoSources.length === 0 ? (
             <VideoUploader onVideoUpload={handleVideoUpload} multiple />
           ) : (
-            <VideoEditor videoSources={videoSources} onVideoUpload={handleVideoUpload} />
+            <VideoEditor videoSources={videoSources} onVideoUpload={handleVideoUpload} onRemoveSource={handleRemoveSource} />
           )}
         </div>
       </main>
