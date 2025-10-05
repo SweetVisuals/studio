@@ -439,32 +439,89 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
       const uniqueVideoSources = videoSources.filter((source, index, arr) => arr.findIndex(s => s.url === source.url) === index);
 
       const videoDurations = await Promise.all(
-        uniqueVideoSources.map(source => new Promise<number>((resolve) => {
+        uniqueVideoSources.map((source, index) => new Promise<number>((resolve) => {
           const video = document.createElement('video');
           video.preload = 'metadata';
           video.style.position = 'absolute';
           video.style.left = '-9999px';
           video.style.top = '-9999px';
           document.body.appendChild(video);
+
+          let metadataLoaded = false;
+
           video.onloadedmetadata = () => {
+            metadataLoaded = true;
             document.body.removeChild(video);
+            console.log(`Video ${index} metadata loaded successfully: ${video.duration}s`);
             resolve(video.duration);
           };
-          video.onerror = (e) => {
-            document.body.removeChild(video);
-            console.warn(`Failed to load metadata for video: ${source.url}, error:`, e);
-            resolve(0);
-          };
 
-          // Add a timeout to prevent hanging
-          setTimeout(() => {
-            if (video.parentNode) {
+          video.onerror = (e) => {
+            if (!metadataLoaded) {
               document.body.removeChild(video);
-              console.warn(`Timeout loading metadata for video: ${source.url}`);
+              console.warn(`Failed to load metadata for video ${index}: ${source.url}, error:`, e);
               resolve(0);
             }
-          }, 5000);
+          };
 
+          // Add a timeout to prevent hanging - increased for production environments
+          // If metadata loading fails, try to estimate duration by preloading the video
+          setTimeout(async () => {
+            if (video.parentNode && !metadataLoaded) {
+              console.warn(`Timeout loading metadata for video ${index}: ${source.url}, attempting fallback estimation`);
+
+              // Try to estimate duration by creating a separate video element and checking playback
+              try {
+                const fallbackVideo = document.createElement('video');
+                fallbackVideo.preload = 'metadata';
+                fallbackVideo.style.position = 'absolute';
+                fallbackVideo.style.left = '-9999px';
+                fallbackVideo.style.top = '-9999px';
+                document.body.appendChild(fallbackVideo);
+
+                await new Promise<void>((resolveFallback, rejectFallback) => {
+                  const cleanup = () => {
+                    if (fallbackVideo.parentNode) {
+                      document.body.removeChild(fallbackVideo);
+                    }
+                  };
+
+                  fallbackVideo.onloadedmetadata = () => {
+                    cleanup();
+                    document.body.removeChild(video); // Clean up the original video
+                    console.log(`Fallback estimation successful for video ${index}: ${fallbackVideo.duration}s`);
+                    resolve(fallbackVideo.duration);
+                    rejectFallback = () => {}; // Clear reject to prevent double calling
+                  };
+
+                  fallbackVideo.onerror = () => {
+                    cleanup();
+                    document.body.removeChild(video);
+                    console.warn(`Fallback estimation also failed for video ${index}, using default duration`);
+                    resolve(30); // Assume 30 seconds as fallback
+                    rejectFallback = () => {};
+                  };
+
+                  // Secondary timeout - 10 seconds for fallback
+                  setTimeout(() => {
+                    cleanup();
+                    document.body.removeChild(video);
+                    console.warn(`Fallback timeout for video ${index}, using default duration`);
+                    resolve(30); // 30 seconds fallback
+                    rejectFallback = () => {};
+                  }, 10000);
+
+                  fallbackVideo.src = source.url;
+                });
+              } catch (fallbackError) {
+                console.warn(`Fallback estimation completely failed for video ${index}:`, fallbackError);
+                document.body.removeChild(video);
+                resolve(30); // 30 seconds as last resort
+              }
+            }
+          }, 15000); // Increased primary timeout to 15 seconds
+
+          console.log(`Starting metadata load for video ${index}: ${source.url}`);
           video.src = source.url;
         }))
       );
