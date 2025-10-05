@@ -27,12 +27,14 @@ type ClipListProps = {
   clips: Clip[];
   setClips: React.Dispatch<React.SetStateAction<Clip[]>>;
   onPreview: (clip: Clip) => void;
+  onSelect?: (clip: Clip) => void;
   aspectRatio: AspectRatio;
   videoSources: VideoSource[];
   activePreviewClipId?: number | null;
   isPreviewing?: boolean;
   sourceScaleFactors?: {[key: number]: number};
   nightVisionColor?: string;
+  nightVisionOpacity?: number;
   grainIntensity?: number;
 };
 
@@ -40,6 +42,7 @@ export default function ClipList({
   clips,
   setClips,
   onPreview,
+  onSelect,
   aspectRatio,
   videoSources,
   activePreviewClipId,
@@ -49,6 +52,7 @@ export default function ClipList({
   exportFrameRate = 30,
   sourceScaleFactors = {},
   nightVisionColor = '#00ff00',
+  nightVisionOpacity = 100,
   grainIntensity = 50
 }: ClipListProps & {
   exportFormat?: 'mp4' | 'webm';
@@ -331,7 +335,7 @@ export default function ClipList({
     for (let cutIndex = 0; cutIndex < cuts.length; cutIndex++) {
       const cut = cuts[cutIndex];
       const videoElement = videoElements[cut.sourceVideo];
-      const frameProcessor = new FrameProcessor(exportWidth, exportHeight, videoElement, nightVisionColor, grainIntensity);
+      const frameProcessor = new FrameProcessor(exportWidth, exportHeight, videoElement, nightVisionColor, nightVisionOpacity, grainIntensity);
 
       console.log(`Processing cut ${cutIndex + 1}/${cuts.length}: source video ${cut.sourceVideo + 1}, time ${cut.start.toFixed(2)}-${cut.end.toFixed(2)}s`);
 
@@ -593,8 +597,14 @@ export default function ClipList({
                 switch (filter) {
                   case 'bw': return 'grayscale(100%)';
                   case 'night-vision':
+                    const opacityFactor = nightVisionOpacity / 100;
                     if (nightVisionColor === '#default') {
-                      return 'grayscale(100%) brightness(1.2) sepia(100%) hue-rotate(80deg) saturate(200%)';
+                      // Interpolate filter values based on opacity
+                      const grayscale = 100 * opacityFactor; // 0% to 100%
+                      const brightness = 1.0 + (0.2 * opacityFactor); // 1.0 to 1.2
+                      const sepia = 100 * opacityFactor; // 0% to 100%
+                      const saturate = 100 + (100 * opacityFactor); // 100% to 200%
+                      return `grayscale(${grayscale}%) brightness(${brightness}) sepia(${sepia}%) hue-rotate(80deg) saturate(${saturate}%)`;
                     } else {
                       // Convert hex color to HSL for hue-rotate
                       const hexToHsl = (hex: string) => {
@@ -623,7 +633,12 @@ export default function ClipList({
                       };
 
                       const [h] = hexToHsl(nightVisionColor);
-                      return `grayscale(100%) brightness(1.2) sepia(100%) hue-rotate(${h}deg) saturate(200%)`;
+                      // Interpolate filter values based on opacity
+                      const grayscale = 100 * opacityFactor; // 0% to 100%
+                      const brightness = 1.0 + (0.2 * opacityFactor); // 1.0 to 1.2
+                      const sepia = 100 * opacityFactor; // 0% to 100%
+                      const saturate = 100 + (100 * opacityFactor); // 100% to 200%
+                      return `grayscale(${grayscale}%) brightness(${brightness}) sepia(${sepia}%) hue-rotate(${h}deg) saturate(${saturate}%)`;
                     }
                   case 'vhs': return 'contrast(1.1) brightness(1.1) saturate(1.2)';
                   case 'grain': return 'none'; // Grain not supported in canvas filter
@@ -682,14 +697,30 @@ export default function ClipList({
     }).filter(f => f).join(', ');
   };
 
+  const clearAllClips = () => {
+    setClips([]);
+    toast({ title: 'All clips cleared.' });
+  };
+
   return (
     <div>
       <div className='flex justify-between items-center mb-4'>
         <h2 className="font-headline text-2xl font-bold">Your Clips</h2>
+        {clips.length > 0 && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={clearAllClips}
+            className="text-destructive hover:bg-destructive/10"
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            Clear All
+          </Button>
+        )}
       </div>
       <div className="grid grid-cols-1 gap-3">
         {clips.map((clip) => (
-          <Card key={clip.id} className="transition-all duration-300">
+          <Card key={clip.id} className="transition-all duration-300 cursor-pointer hover:bg-secondary/20" onClick={() => onSelect?.(clip)}>
             {exportingClipId === clip.id ? (
                 <CardContent className="p-3 flex flex-col items-center justify-center gap-2">
                     <Progress value={exportProgress} className="w-full" />

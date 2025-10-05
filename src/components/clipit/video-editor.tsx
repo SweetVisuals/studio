@@ -33,6 +33,7 @@ import {
 } from '@/components/ui/accordion';
 import { Plus, Play, Sparkles, Loader2, Volume2, VolumeX, Upload, Music4, Film, UploadCloud, Pause, X, ChevronUp, ChevronDown, Settings, Download, Expand, Scissors, SlidersHorizontal, AudioLines } from 'lucide-react';
 import ClipList from './clip-list';
+import Timeline from '@/components/ui/timeline';
 import type { Clip, VideoFilter, AspectRatio, ClipCut } from '@/app/page';
 import { formatTime } from '@/lib/utils';
 
@@ -69,6 +70,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
   const [clips, setClips] = useState<Clip[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [activeClipForPreview, setActiveClipForPreview] = useState<Clip | null>(null);
+  const [selectedClipForEditing, setSelectedClipForEditing] = useState<Clip | null>(null);
   const [currentCutIndex, setCurrentCutIndex] = useState(0);
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
 
@@ -84,6 +86,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
   const [cutDuration, setCutDuration] = useState(2);
   const [sourceCutDurations, setSourceCutDurations] = useState<{[key: number]: number}>({});
   const [nightVisionColor, setNightVisionColor] = useState('#00ff00'); // Default green - matches the original hue-rotate(80deg) effect
+  const [nightVisionOpacity, setNightVisionOpacity] = useState(100); // Default opacity 100%
   const [grainIntensity, setGrainIntensity] = useState(50); // Default grain intensity 50%
 
   // State for new side panel features
@@ -93,7 +96,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
   const [exportFrameRate, setExportFrameRate] = useState<24 | 30 | 60>(30);
 
   // State for preview size
-  const [previewSize, setPreviewSize] = useState(100);
+  const [previewSize, setPreviewSize] = useState(50);
 
   // State to track dynamic styles for scale application
   const [videoStyles, setVideoStyles] = useState<{[key: number]: any}>({});
@@ -304,7 +307,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
 
     if (!isMultiCut) {
       // Single clip logic
-      setCurrentTime(video.currentTime);
+      setCurrentTime(video.currentTime - activeClip.start);
       if (video.currentTime >= activeClip.end) {
         stopPreview();
       }
@@ -359,7 +362,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
   }, [videoSources, stopPreview]);
 
   useEffect(() => {
-    const video = videoRef.current;
+    const video = videoRefs.current[activeVideoIndex];
     if (!video) return;
 
     video.addEventListener('timeupdate', timeUpdateHandler);
@@ -367,7 +370,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
     return () => {
       video.removeEventListener('timeupdate', timeUpdateHandler);
     };
-  }, [timeUpdateHandler]);
+  }, [timeUpdateHandler, activeVideoIndex]);
 
   useEffect(() => {
     if (!isPreviewPlaying || !activeClipForPreview) {
@@ -454,9 +457,19 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
     const time = value[0];
     const video = videoRefs.current[activeVideoIndex]; // Use active video from refs
     if (video) {
-      video.currentTime = time;
+      if (activeClipForPreview && !activeClipForPreview.cuts) {
+        // Single clip preview - time is relative
+        video.currentTime = activeClipForPreview.start + time;
+      } else {
+        // Normal playback - time is absolute
+        video.currentTime = time;
+      }
       setCurrentTime(time);
     }
+  };
+
+  const selectClipForEditing = (clip: Clip) => {
+    setSelectedClipForEditing(clip);
   };
 
   const playClip = (clipToPlay: Clip) => {
@@ -470,6 +483,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
     }
 
     setActiveClipForPreview(clipToPlay);
+    setSelectedClipForEditing(clipToPlay);
     setCurrentCutIndex(0);
     setIsPreviewPlaying(true);
 
@@ -875,10 +889,18 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
   const getNightVisionStyle = (f: VideoFilter[]) => {
     if (!f || !f.includes('night-vision')) return {};
 
+    const opacityFactor = nightVisionOpacity / 100;
+
     // Handle default night vision (original hue-rotate(80deg))
     if (nightVisionColor === '#default') {
+      // Interpolate filter values based on opacity
+      const grayscale = 100 * opacityFactor; // 0% to 100%
+      const brightness = 1.0 + (0.2 * opacityFactor); // 1.0 to 1.2
+      const sepia = 100 * opacityFactor; // 0% to 100%
+      const saturate = 100 + (100 * opacityFactor); // 100% to 200%
+
       return {
-        filter: 'grayscale(100%) brightness(1.2) sepia(100%) hue-rotate(80deg) saturate(200%)'
+        filter: `grayscale(${grayscale}%) brightness(${brightness}) sepia(${sepia}%) hue-rotate(80deg) saturate(${saturate}%)`
       };
     }
 
@@ -909,8 +931,14 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
     };
 
     const [h] = hexToHsl(nightVisionColor);
+    // Interpolate filter values based on opacity
+    const grayscale = 100 * opacityFactor; // 0% to 100%
+    const brightness = 1.0 + (0.2 * opacityFactor); // 1.0 to 1.2
+    const sepia = 100 * opacityFactor; // 0% to 100%
+    const saturate = 100 + (100 * opacityFactor); // 100% to 200%
+
     return {
-      filter: `grayscale(100%) brightness(1.2) sepia(100%) hue-rotate(${h}deg) saturate(200%)`
+      filter: `grayscale(${grayscale}%) brightness(${brightness}) sepia(${sepia}%) hue-rotate(${h}deg) saturate(${saturate}%)`
     };
   };
   
@@ -938,8 +966,8 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
   };
 
   return (
-    <div className="flex flex-1 h-full overflow-hidden">
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 w-full h-full p-4">
+    <div className="flex flex-1 h-full">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 w-full p-4">
         {/* Left Panel: Video Sources & Clip List */}
         <Card className="flex flex-col p-4 bg-card/60 border-border/50 shadow-lg overflow-hidden">
           <h3 className="text-lg font-semibold mb-4 flex items-center gap-2 text-foreground/90">
@@ -979,6 +1007,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
               clips={clips}
               setClips={setClips}
               onPreview={playClip}
+              onSelect={selectClipForEditing}
               aspectRatio={aspectRatio}
               videoSources={videoSources}
               activePreviewClipId={activeClipForPreview?.id}
@@ -988,13 +1017,14 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
               exportFrameRate={exportFrameRate}
               sourceScaleFactors={sourceScaleFactors}
               nightVisionColor={nightVisionColor}
+              nightVisionOpacity={nightVisionOpacity}
               grainIntensity={grainIntensity}
             />
           </div>
         </Card>
 
         {/* Middle Panel: Video Preview & Controls */}
-        <Card className="flex flex-col p-4 bg-card/60 border-border/50 shadow-lg overflow-hidden">
+        <Card className="flex flex-col p-4 bg-card/60 border-border/50 shadow-lg overflow-hidden sticky top-16">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold flex items-center gap-2 text-foreground/90">
               <Play className="h-5 w-5 text-primary" /> Video Preview
@@ -1060,7 +1090,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
               />
             </div>
           </div>
-          <div className="flex justify-start">
+          <div className={cn("sticky top-0 z-10 flex", previewSize < 100 ? "justify-center" : "justify-start")}>
             <div ref={videoWrapperRef} className={cn("bg-black/90 backdrop-blur-sm rounded-xl overflow-hidden transition-all duration-300 shadow-2xl border border-border/20 relative", getAspectRatioClass(aspectRatio))} style={{ width: `${previewSize}%`, height: 'auto', maxHeight: '60vh' }}>
               <div className={cn("relative w-full h-full", getFilterClass(activeFilters))} style={getNightVisionStyle(activeFilters)}>
               {videoSources.map((source, index) => {
@@ -1091,26 +1121,39 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
             </div>
           </div>
         </div>
-          <div className="space-y-3 mt-4">
-            <Slider
-              min={0}
-              max={activeClipForPreview?.end || duration}
-              step={0.01}
-              value={[currentTime]}
-              onValueChange={handleSeek}
-              disabled={!!activeClipForPreview?.cuts}
-              className="w-full [&_[role=slider]]:bg-primary [&_[role=slider]]:border-primary [&_[role=slider]]:shadow-lg"
-            />
-            <div className="flex justify-between text-sm text-muted-foreground font-mono bg-secondary/30 rounded-lg px-3 py-2">
-              <span className="font-semibold">{formatTime(currentTime, true)}</span>
-              <span className="font-semibold">{formatTime(activeClipForPreview?.end || duration, true)}</span>
-            </div>
+        <div className="sticky top-0 z-10 space-y-3 mt-4 bg-card/95 backdrop-blur-sm -mx-4 px-4 py-4 border-t border-border/50">
+          <Slider
+            min={0}
+            max={activeClipForPreview ? (activeClipForPreview.cuts ? activeClipForPreview.end : activeClipForPreview.end - activeClipForPreview.start) : duration}
+            step={0.01}
+            value={[currentTime]}
+            onValueChange={handleSeek}
+            disabled={!!activeClipForPreview?.cuts}
+            className="w-full [&_[role=slider]]:bg-primary [&_[role=slider]]:border-primary [&_[role=slider]]:shadow-lg"
+          />
+          <div className="flex justify-between text-sm text-muted-foreground font-mono bg-secondary/30 rounded-lg px-3 py-2">
+            <span className="font-semibold">{formatTime(currentTime, true)}</span>
+            <span className="font-semibold">{formatTime(activeClipForPreview ? (activeClipForPreview.cuts ? activeClipForPreview.end : activeClipForPreview.end - activeClipForPreview.start) : duration, true)}</span>
           </div>
-        </Card>
+          {selectedClipForEditing?.cuts && selectedClipForEditing.cuts.length > 0 && (
+            <Timeline
+              cuts={selectedClipForEditing.cuts}
+              totalDuration={selectedClipForEditing.cuts.reduce((acc, cut) => acc + (cut.end - cut.start), 0)}
+              onCutsChange={(newCuts) => {
+                setSelectedClipForEditing(prev => prev ? { ...prev, cuts: newCuts } : null);
+                // Also update activeClipForPreview if it's the same clip
+                setActiveClipForPreview(prev => prev?.id === selectedClipForEditing.id ? { ...prev, cuts: newCuts } : prev);
+                // Update the clip in the clips array
+                setClips(prev => prev.map(c => c.id === selectedClipForEditing?.id ? { ...c, cuts: newCuts } : c));
+              }}
+            />
+          )}
+        </div>
+      </Card>
 
         {/* Right Panel: Settings Tabs */}
-        <Card className="flex flex-col p-4 bg-card/60 border-border/50 shadow-lg overflow-hidden">
-          <Tabs defaultValue="clip-settings" className="flex flex-col flex-1">
+        <Card className="flex flex-col p-4 bg-card/60 border-border/50 shadow-lg overflow-hidden sticky top-16">
+          <Tabs defaultValue="clip-settings" className="flex flex-col flex-1 min-h-0">
             <TabsList className="grid w-full grid-cols-3 h-10 mb-4">
               <TabsTrigger value="clip-settings" className="flex items-center gap-2 text-sm">
                 <SlidersHorizontal className="h-4 w-4" /> Clip
@@ -1123,7 +1166,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
               </TabsTrigger>
             </TabsList>
 
-            <div className="flex-1 overflow-y-auto pr-2 -mr-2"> {/* Added negative margin to counteract scrollbar padding */}
+            <div className="flex-1 overflow-y-auto pr-2 -mr-2 min-h-0 pb-4"> {/* Added negative margin to counteract scrollbar padding */}
               <TabsContent value="clip-settings" className="space-y-6">
                 <Accordion type="multiple" defaultValue={["item-1", "item-2", "item-3"]} className="w-full">
                   <AccordionItem value="item-1">
@@ -1240,6 +1283,27 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                                 />
                               </div>
                             </div>
+                            <div className="space-y-2 mt-4">
+                              <Label className="text-sm font-medium">Night Vision Intensity</Label>
+                              <div className="space-y-2">
+                                <Slider
+                                  value={[nightVisionOpacity]}
+                                  onValueChange={(value) => setNightVisionOpacity(value[0])}
+                                  min={0}
+                                  max={100}
+                                  step={1}
+                                  className="w-full"
+                                />
+                                <div className="flex justify-between text-xs text-muted-foreground">
+                                  <span>0%</span>
+                                  <span>{nightVisionOpacity}%</span>
+                                  <span>100%</span>
+                                </div>
+                              </div>
+                            <p className="text-xs text-muted-foreground">
+                              Adjust the intensity of the night vision effect. Lower values make the effect more subtle while maintaining full video visibility.
+                            </p>
+                            </div>
                             <p className="text-xs text-muted-foreground">
                               Choose a color for the night vision effect. "Default" uses the original night vision appearance. Changes apply instantly to the preview.
                             </p>
@@ -1273,6 +1337,22 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                     </AccordionContent>
                   </AccordionItem>
                 </Accordion>
+                <div className="bg-card/95 backdrop-blur-sm border-t border-border/50 p-4 space-y-3">
+                  <Button onClick={handlePreviewCurrentSelection} className="w-full bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 shadow-lg">
+                    {currentPreviewIcon} {isPreviewPlaying && activeClipForPreview?.id === -1 ? 'Stop' : 'Preview Selection'}
+                  </Button>
+                  <Button onClick={addClip} variant="outline" className="w-full border-2 hover:bg-secondary/50">
+                    <Plus className="mr-2 h-4 w-4" /> Add Clip Manually
+                  </Button>
+                  <Button onClick={createShortFormClips} disabled={isLoading || videoSources.length === 0} className="w-full bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 shadow-lg disabled:opacity-50">
+                    {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Scissors className="mr-2 h-4 w-4" />}
+                    {isLoading ? 'Working...' : 'Cut into Short Clips'}
+                  </Button>
+                  <Button onClick={createMultiCamEdit} disabled={isLoading || videoSources.length === 0 || !overlayAudioFile} className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 shadow-lg disabled:opacity-50">
+                    {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Sparkles className="mr-2 h-4 w-4" />}
+                    {isLoading ? 'Working...' : 'Create Audio-Driven Edit'}
+                  </Button>
+                </div>
               </TabsContent>
 
               <TabsContent value="source-management" className="space-y-6">
@@ -1371,6 +1451,22 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                     </AccordionContent>
                   </AccordionItem>
                 </Accordion>
+                <div className="bg-card/95 backdrop-blur-sm border-t border-border/50 p-4 space-y-3">
+                  <Button onClick={handlePreviewCurrentSelection} className="w-full bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 shadow-lg">
+                    {currentPreviewIcon} {isPreviewPlaying && activeClipForPreview?.id === -1 ? 'Stop' : 'Preview Selection'}
+                  </Button>
+                  <Button onClick={addClip} variant="outline" className="w-full border-2 hover:bg-secondary/50">
+                    <Plus className="mr-2 h-4 w-4" /> Add Clip Manually
+                  </Button>
+                  <Button onClick={createShortFormClips} disabled={isLoading || videoSources.length === 0} className="w-full bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 shadow-lg disabled:opacity-50">
+                    {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Scissors className="mr-2 h-4 w-4" />}
+                    {isLoading ? 'Working...' : 'Cut into Short Clips'}
+                  </Button>
+                  <Button onClick={createMultiCamEdit} disabled={isLoading || videoSources.length === 0 || !overlayAudioFile} className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 shadow-lg disabled:opacity-50">
+                    {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Sparkles className="mr-2 h-4 w-4" />}
+                    {isLoading ? 'Working...' : 'Create Audio-Driven Edit'}
+                  </Button>
+                </div>
               </TabsContent>
 
               <TabsContent value="audio-export" className="space-y-6">
@@ -1461,24 +1557,23 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                     </AccordionContent>
                   </AccordionItem>
                 </Accordion>
+                <div className="bg-card/95 backdrop-blur-sm border-t border-border/50 p-4 space-y-3">
+                  <Button onClick={handlePreviewCurrentSelection} className="w-full bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 shadow-lg">
+                    {currentPreviewIcon} {isPreviewPlaying && activeClipForPreview?.id === -1 ? 'Stop' : 'Preview Selection'}
+                  </Button>
+                  <Button onClick={addClip} variant="outline" className="w-full border-2 hover:bg-secondary/50">
+                    <Plus className="mr-2 h-4 w-4" /> Add Clip Manually
+                  </Button>
+                  <Button onClick={createShortFormClips} disabled={isLoading || videoSources.length === 0} className="w-full bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 shadow-lg disabled:opacity-50">
+                    {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Scissors className="mr-2 h-4 w-4" />}
+                    {isLoading ? 'Working...' : 'Cut into Short Clips'}
+                  </Button>
+                  <Button onClick={createMultiCamEdit} disabled={isLoading || videoSources.length === 0 || !overlayAudioFile} className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 shadow-lg disabled:opacity-50">
+                    {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Sparkles className="mr-2 h-4 w-4" />}
+                    {isLoading ? 'Working...' : 'Create Audio-Driven Edit'}
+                  </Button>
+                </div>
               </TabsContent>
-            </div>
-
-            <div className="mt-auto pt-4 space-y-3 border-t border-border/50">
-              <Button onClick={handlePreviewCurrentSelection} className="w-full bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 shadow-lg">
-                {currentPreviewIcon} {isPreviewPlaying && activeClipForPreview?.id === -1 ? 'Stop' : 'Preview Selection'}
-              </Button>
-              <Button onClick={addClip} variant="outline" className="w-full border-2 hover:bg-secondary/50">
-                <Plus className="mr-2 h-4 w-4" /> Add Clip Manually
-              </Button>
-              <Button onClick={createShortFormClips} disabled={isLoading || videoSources.length === 0} className="w-full bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 shadow-lg disabled:opacity-50">
-                {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Scissors className="mr-2 h-4 w-4" />}
-                {isLoading ? 'Working...' : 'Cut into Short Clips'}
-              </Button>
-              <Button onClick={createMultiCamEdit} disabled={isLoading || videoSources.length === 0 || !overlayAudioFile} className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 shadow-lg disabled:opacity-50">
-                {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Sparkles className="mr-2 h-4 w-4" />}
-                {isLoading ? 'Working...' : 'Create Audio-Driven Edit'}
-              </Button>
             </div>
           </Tabs>
         </Card>

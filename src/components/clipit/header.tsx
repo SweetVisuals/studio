@@ -2,7 +2,7 @@ import { Clapperboard, Sparkles } from 'lucide-react';
 
 export default function Header() {
   return (
-    <header className="flex h-16 shrink-0 items-center border-b border-border/40 bg-background/80 backdrop-blur-xl px-4"> {/* Adjusted padding to px-4 */}
+    <header className="sticky top-0 z-50 flex h-16 shrink-0 items-center border-b border-border/40 bg-background/80 backdrop-blur-xl px-4"> {/* Adjusted padding to px-4 */}
       <div className="flex items-center justify-between w-full">
         <div className="flex items-center gap-3">
           <div className="relative">

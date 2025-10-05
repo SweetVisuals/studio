@@ -61,9 +61,10 @@ export class FrameProcessor {
   private ctx: OffscreenCanvasRenderingContext2D;
   private videoElement: HTMLVideoElement;
   private nightVisionColor: string;
+  private nightVisionOpacity: number;
   private grainIntensity: number;
 
-  constructor(width: number, height: number, videoElement: HTMLVideoElement, nightVisionColor: string = '#00ff00', grainIntensity: number = 50) {
+  constructor(width: number, height: number, videoElement: HTMLVideoElement, nightVisionColor: string = '#00ff00', nightVisionOpacity: number = 100, grainIntensity: number = 50) {
     this.canvas = new OffscreenCanvas(width, height);
     this.ctx = this.canvas.getContext('2d', {
       willReadFrequently: true,
@@ -71,6 +72,7 @@ export class FrameProcessor {
     })!;
     this.videoElement = videoElement;
     this.nightVisionColor = nightVisionColor;
+    this.nightVisionOpacity = nightVisionOpacity;
     this.grainIntensity = grainIntensity;
 
     // Performance optimizations
@@ -125,8 +127,14 @@ export class FrameProcessor {
         case 'bw':
           return 'grayscale(100%)';
         case 'night-vision':
+          const opacityFactor = this.nightVisionOpacity / 100;
           if (this.nightVisionColor === '#default') {
-            return 'grayscale(100%) brightness(1.2) sepia(100%) hue-rotate(80deg) saturate(200%)';
+            // Interpolate filter values based on opacity
+            const grayscale = 100 * opacityFactor; // 0% to 100%
+            const brightness = 1.0 + (0.2 * opacityFactor); // 1.0 to 1.2
+            const sepia = 100 * opacityFactor; // 0% to 100%
+            const saturate = 100 + (100 * opacityFactor); // 100% to 200%
+            return `grayscale(${grayscale}%) brightness(${brightness}) sepia(${sepia}%) hue-rotate(80deg) saturate(${saturate}%)`;
           } else {
             // Convert hex color to HSL for hue-rotate
             const hexToHsl = (hex: string) => {
@@ -155,7 +163,12 @@ export class FrameProcessor {
             };
 
             const [h] = hexToHsl(this.nightVisionColor);
-            return `grayscale(100%) brightness(1.2) sepia(100%) hue-rotate(${h}deg) saturate(200%)`;
+            // Interpolate filter values based on opacity
+            const grayscale = 100 * opacityFactor; // 0% to 100%
+            const brightness = 1.0 + (0.2 * opacityFactor); // 1.0 to 1.2
+            const sepia = 100 * opacityFactor; // 0% to 100%
+            const saturate = 100 + (100 * opacityFactor); // 100% to 200%
+            return `grayscale(${grayscale}%) brightness(${brightness}) sepia(${sepia}%) hue-rotate(${h}deg) saturate(${saturate}%)`;
           }
         case 'vhs':
           // VHS effect using canvas operations - simplified CSS approximation
