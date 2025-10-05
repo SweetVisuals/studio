@@ -821,7 +821,6 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
     // Reset editing state
     setOverlayAudioFile(null);
     setOverlayAudioUrl(null);
-    setOverlayAudioStartTime(0);
     setIsMuted(false);
     setFilters(['none']);
     if (audioInputRef.current) audioInputRef.current.value = '';
@@ -919,15 +918,6 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
         case '1:1': return 'aspect-square';
         case '16:9': return 'aspect-[16/9]';
         default: return 'aspect-video';
-    }
-  };
-
-  const getPaddingBottom = (ar: AspectRatio) => {
-    switch(ar) {
-        case '9:16': return (16/9 * 100);
-        case '1:1': return 100;
-        case '16:9': return (9/16 * 100);
-        default: return (16/9 * 100);
     }
   };
 
@@ -1064,8 +1054,8 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
               />
             </div>
           </div>
-          <div className="flex justify-center">
-            <div ref={videoWrapperRef} className={cn("bg-black/90 backdrop-blur-sm rounded-xl overflow-hidden transition-all duration-300 shadow-2xl border border-border/20 relative")} style={{ width: `${previewSize}%`, paddingBottom: `${getPaddingBottom(aspectRatio)}%`, height: 0 }}>
+          <div className="flex justify-start">
+            <div ref={videoWrapperRef} className={cn("bg-black/90 backdrop-blur-sm rounded-xl overflow-hidden transition-all duration-300 shadow-2xl border border-border/20 relative", getAspectRatioClass(aspectRatio))} style={{ width: `${previewSize}%`, height: 'auto', maxHeight: '60vh' }}>
               <div className={cn("relative w-full h-full", getFilterClass(activeFilters))} style={getNightVisionStyle(activeFilters)}>
               {videoSources.map((source, index) => {
                 const isVisible = isPreviewPlaying && activeClipForPreview?.cuts
@@ -1078,7 +1068,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                     ref={(el) => {
                       if (el) videoRefs.current[index] = el;
                     }}
-                    className={cn("h-full w-full object-contain absolute inset-0", !isVisible && "opacity-0")}
+                    className={cn("h-full w-full object-cover absolute inset-0", !isVisible && "opacity-0")}
                     style={{
                       ...videoStyles[index],
                       zIndex: isVisible ? 1 : 0
