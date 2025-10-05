@@ -66,6 +66,8 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
   const [previewSourcesOpen, setPreviewSourcesOpen] = useState(false);
   const [previewActiveSource, setPreviewActiveSource] = useState(0);
   const [cutDuration, setCutDuration] = useState(2);
+  const [sourceCutDurations, setSourceCutDurations] = useState<{[key: number]: number}>({});
+  const [nightVisionColor, setNightVisionColor] = useState('#00ff00'); // Default green
 
   // State for new side panel features
   const [sourceScaleFactors, setSourceScaleFactors] = useState<{[key: number]: number}>({});
@@ -583,7 +585,9 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
         for (let i = 0; i < numCuts; i++) {
            const sourceIndex = sourceSequence[i];
             const sourceInfo = validSources[sourceIndex];
-            const cutDurationActual = (i === numCuts - 1 && remainder > 0) ? remainder : clipDuration;
+            // Use individual source cut duration if set, otherwise fall back to global
+            const sourceSpecificDuration = sourceCutDurations[sourceInfo.originalIndex] || cutDuration;
+            const cutDurationActual = (i === numCuts - 1 && remainder > 0) ? remainder : sourceSpecificDuration;
             const startTime = Math.random() * (sourceInfo.duration - cutDurationActual);
 
             cuts.push({
@@ -597,7 +601,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
           id: Date.now() + clipIndex,
           start: 0,
           end: audioDuration,
-          title: `Multi-Cam: ${overlayAudioFile.name.split('.').slice(0, -1).join('.')} - Edit ${clipIndex + 1}`,
+          title: `Clip ${clips.length + clipIndex + 1}`,
           filters: filters,
           isMuted: true,
           overlayAudioUrl: audioUrl,
@@ -641,7 +645,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
       id,
       start,
       end,
-      title: `My Clip ${clips.length + 1}`,
+      title: `Clip ${clips.length + 1}`,
       filters,
       isMuted,
       overlayAudioUrl: newOverlayUrl || undefined,
@@ -693,11 +697,47 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
     return f.map(filter => {
       switch(filter) {
         case 'bw': return 'grayscale';
-        case 'night-vision': return 'night-vision-filter';
+        case 'night-vision': return '';
         case 'vhs': return 'vhs-filter';
         default: return '';
       }
     }).join(' ');
+  };
+
+  // Generate dynamic night vision filter style
+  const getNightVisionStyle = (f: VideoFilter[]) => {
+    if (!f || !f.includes('night-vision')) return {};
+
+    // Convert hex color to HSL for hue-rotate
+    const hexToHsl = (hex: string) => {
+      const r = parseInt(hex.slice(1, 3), 16) / 255;
+      const g = parseInt(hex.slice(3, 5), 16) / 255;
+      const b = parseInt(hex.slice(5, 7), 16) / 255;
+
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      let h = 0;
+      let s = 0;
+      const l = (max + min) / 2;
+
+      if (max !== min) {
+        const d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        switch (max) {
+          case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+          case g: h = (b - r) / d + 2; break;
+          case b: h = (r - g) / d + 4; break;
+        }
+        h /= 6;
+      }
+
+      return [h * 360, s * 100, l * 100];
+    };
+
+    const [h] = hexToHsl(nightVisionColor);
+    return {
+      filter: `grayscale(100%) brightness(1.2) sepia(100%) hue-rotate(${h}deg) saturate(200%)`
+    };
   };
   
   const activeFilters = activeClipForPreview?.filters ?? filters;
@@ -808,7 +848,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                      />
                 </div>
                <div ref={videoWrapperRef} className={cn("w-full mx-auto bg-black rounded-lg overflow-hidden transition-all duration-300", getAspectRatioClass(aspectRatio))}>
-                  <div className={cn("relative w-full h-full", getFilterClass(activeFilters))}>
+                  <div className={cn("relative w-full h-full", getFilterClass(activeFilters))} style={getNightVisionStyle(activeFilters)}>
                     {videoSources.map((source, index) => (
                       <video
                         key={index}
@@ -883,6 +923,50 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                             </Label>
                         ))}
                     </div>
+
+                    {filters.includes('night-vision') && (
+                        <div className="space-y-2 mt-4">
+                            <Label className="text-sm font-medium">Night Vision Color</Label>
+                            <div className="flex items-center gap-3">
+                                <div className="flex gap-2">
+                                    {[
+                                        { color: '#00ff00', name: 'Green' },
+                                        { color: '#0000ff', name: 'Blue' },
+                                        { color: '#ff0000', name: 'Red' },
+                                        { color: '#ffff00', name: 'Yellow' },
+                                        { color: '#ff00ff', name: 'Magenta' },
+                                        { color: '#00ffff', name: 'Cyan' }
+                                    ].map(({ color, name }) => (
+                                        <button
+                                            key={color}
+                                            className={cn(
+                                                "w-8 h-8 rounded-full border-2 transition-all hover:scale-110",
+                                                nightVisionColor === color ? "border-primary ring-2 ring-primary/20" : "border-border"
+                                            )}
+                                            style={{ backgroundColor: color }}
+                                            onClick={() => setNightVisionColor(color)}
+                                            title={name}
+                                            aria-label={`Set night vision to ${name.toLowerCase()}`}
+                                        />
+                                    ))}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <Label htmlFor="custom-color" className="text-xs">Custom:</Label>
+                                    <input
+                                        id="custom-color"
+                                        type="color"
+                                        value={nightVisionColor}
+                                        onChange={(e) => setNightVisionColor(e.target.value)}
+                                        className="w-8 h-8 rounded cursor-pointer border border-border"
+                                        title="Custom color picker"
+                                    />
+                                </div>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                                Choose a color for the night vision effect. Changes apply instantly to the preview.
+                            </p>
+                        </div>
+                    )}
                 </div>
 
 
@@ -922,23 +1006,43 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                                             </Button>
                                         </div>
                                     </div>
-                                    <div className="flex items-center gap-2">
-                                        <Label htmlFor={`scale-${index}`} className="text-xs flex-shrink-0">Scale:</Label>
-                                        <Input
-                                            id={`scale-${index}`}
-                                            type="number"
-                                            value={((sourceScaleFactors[index] || 1.0) * 100).toFixed(0)}
-                                            onChange={(e) => {
-                                                const value = (parseFloat(e.target.value) || 100) / 100;
-                                                setSourceScaleFactors(prev => ({ ...prev, [index]: value }));
-                                            }}
-                                            step="1"
-                                            min="10"
-                                            max="500"
-                                            className="h-7 text-xs flex-1"
-                                            placeholder="100"
-                                        />
-                                        <span className="text-xs text-muted-foreground">%</span>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div className="flex items-center gap-1">
+                                            <Label htmlFor={`scale-${index}`} className="text-xs flex-shrink-0">Scale:</Label>
+                                            <Input
+                                                id={`scale-${index}`}
+                                                type="number"
+                                                value={((sourceScaleFactors[index] || 1.0) * 100).toFixed(0)}
+                                                onChange={(e) => {
+                                                    const value = (parseFloat(e.target.value) || 100) / 100;
+                                                    setSourceScaleFactors(prev => ({ ...prev, [index]: value }));
+                                                }}
+                                                step="1"
+                                                min="10"
+                                                max="500"
+                                                className="h-7 text-xs flex-1"
+                                                placeholder="100"
+                                            />
+                                            <span className="text-xs text-muted-foreground">%</span>
+                                        </div>
+                                        <div className="flex items-center gap-1">
+                                            <Label htmlFor={`cut-duration-${index}`} className="text-xs flex-shrink-0">Cut Dur:</Label>
+                                            <Input
+                                                id={`cut-duration-${index}`}
+                                                type="number"
+                                                value={(sourceCutDurations[index] || cutDuration).toFixed(1)}
+                                                onChange={(e) => {
+                                                    const value = parseFloat(e.target.value) || cutDuration;
+                                                    setSourceCutDurations(prev => ({ ...prev, [index]: value }));
+                                                }}
+                                                step="0.1"
+                                                min="0.1"
+                                                max="10"
+                                                className="h-7 text-xs flex-1"
+                                                placeholder={cutDuration.toFixed(1)}
+                                            />
+                                            <span className="text-xs text-muted-foreground">s</span>
+                                        </div>
                                     </div>
                                 </div>
                             ))}

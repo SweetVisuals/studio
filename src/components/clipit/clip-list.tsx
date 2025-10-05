@@ -577,7 +577,7 @@ export default function ClipList({
       <div className='flex justify-between items-center mb-4'>
         <h2 className="font-headline text-2xl font-bold">Your Clips</h2>
       </div>
-      <div className="grid grid-cols-1 gap-3 max-h-96 overflow-y-auto">
+      <div className="grid grid-cols-1 gap-3">
         {clips.map((clip) => (
           <Card key={clip.id} className="transition-all duration-300">
             {exportingClipId === clip.id ? (
