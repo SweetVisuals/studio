@@ -481,16 +481,18 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
 
       // For multi-cam edit, we just need at least 2 video sources - duration checking is not essential
       // since the feature can work with any available video content
+      // Filter out sources that failed to load metadata entirely (duration 0)
       const validSources = uniqueVideoSources
         .map((source, index) => ({
           originalIndex: videoSources.findIndex(s => s.url === source.url),
-          duration: Math.max(videoDurations[index], clipDuration) // Assume at least cutDuration for any source
-        }));
+          duration: videoDurations[index]
+        }))
+        .filter(source => source.duration > 0); // Only use sources that successfully loaded metadata
 
-      console.log(`Multi-cam edit sources: ${validSources.length} sources available`);
+      console.log(`Multi-cam edit sources: ${validSources.length} valid sources with duration > 0`);
 
       if (validSources.length < 2) {
-        throw new Error(`Need at least 2 video sources for multi-cam edit. Please upload more video files.`);
+        throw new Error(`Multi-cam edit requires at least 2 video sources that can be successfully loaded. Currently only ${validSources.length}/${videoSources.length} sources passed metadata loading. Please try uploading different video files or clearing your browser cache.`);
       }
 
       const audioUrl = URL.createObjectURL(overlayAudioFile);
