@@ -32,6 +32,8 @@ type ClipListProps = {
   activePreviewClipId?: number | null;
   isPreviewing?: boolean;
   sourceScaleFactors?: {[key: number]: number};
+  nightVisionColor?: string;
+  grainIntensity?: number;
 };
 
 export default function ClipList({
@@ -45,7 +47,9 @@ export default function ClipList({
   exportFormat = 'mp4',
   exportQuality = 'high',
   exportFrameRate = 30,
-  sourceScaleFactors = {}
+  sourceScaleFactors = {},
+  nightVisionColor = '#00ff00',
+  grainIntensity = 50
 }: ClipListProps & {
   exportFormat?: 'mp4' | 'webm';
   exportQuality?: 'low' | 'medium' | 'high';
@@ -327,7 +331,7 @@ export default function ClipList({
     for (let cutIndex = 0; cutIndex < cuts.length; cutIndex++) {
       const cut = cuts[cutIndex];
       const videoElement = videoElements[cut.sourceVideo];
-      const frameProcessor = new FrameProcessor(exportWidth, exportHeight, videoElement);
+      const frameProcessor = new FrameProcessor(exportWidth, exportHeight, videoElement, nightVisionColor, grainIntensity);
 
       console.log(`Processing cut ${cutIndex + 1}/${cuts.length}: source video ${cut.sourceVideo + 1}, time ${cut.start.toFixed(2)}-${cut.end.toFixed(2)}s`);
 
@@ -588,8 +592,41 @@ export default function ClipList({
             ? clip.filters.map(filter => {
                 switch (filter) {
                   case 'bw': return 'grayscale(100%)';
-                  case 'night-vision': return 'grayscale(100%) brightness(1.2) sepia(100%) hue-rotate(80deg) saturate(200%)';
+                  case 'night-vision':
+                    if (nightVisionColor === '#default') {
+                      return 'grayscale(100%) brightness(1.2) sepia(100%) hue-rotate(80deg) saturate(200%)';
+                    } else {
+                      // Convert hex color to HSL for hue-rotate
+                      const hexToHsl = (hex: string) => {
+                        const r = parseInt(hex.slice(1, 3), 16) / 255;
+                        const g = parseInt(hex.slice(3, 5), 16) / 255;
+                        const b = parseInt(hex.slice(5, 7), 16) / 255;
+
+                        const max = Math.max(r, g, b);
+                        const min = Math.min(r, g, b);
+                        let h = 0;
+                        let s = 0;
+                        const l = (max + min) / 2;
+
+                        if (max !== min) {
+                          const d = max - min;
+                          s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+                          switch (max) {
+                            case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+                            case g: h = (b - r) / d + 2; break;
+                            case b: h = (r - g) / d + 4; break;
+                          }
+                          h /= 6;
+                        }
+
+                        return [h * 360, s * 100, l * 100];
+                      };
+
+                      const [h] = hexToHsl(nightVisionColor);
+                      return `grayscale(100%) brightness(1.2) sepia(100%) hue-rotate(${h}deg) saturate(200%)`;
+                    }
                   case 'vhs': return 'contrast(1.1) brightness(1.1) saturate(1.2)';
+                  case 'grain': return 'none'; // Grain not supported in canvas filter
                   default: return 'none';
                 }
               }).filter(f => f !== 'none').join(' ')

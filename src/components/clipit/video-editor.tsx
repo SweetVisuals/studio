@@ -987,6 +987,8 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
               exportQuality={exportQuality}
               exportFrameRate={exportFrameRate}
               sourceScaleFactors={sourceScaleFactors}
+              nightVisionColor={nightVisionColor}
+              grainIntensity={grainIntensity}
             />
           </div>
         </Card>
