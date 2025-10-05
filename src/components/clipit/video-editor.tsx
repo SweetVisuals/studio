@@ -77,6 +77,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('9:16');
   const [overlayAudioFile, setOverlayAudioFile] = useState<File | null>(null);
   const [overlayAudioUrl, setOverlayAudioUrl] = useState<string | null>(null);
+  const [overlayAudioStartTime, setOverlayAudioStartTime] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const [previewSourcesOpen, setPreviewSourcesOpen] = useState(false);
   const [previewActiveSource, setPreviewActiveSource] = useState(0);
@@ -474,20 +475,21 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
         audioEl.src = clipToPlay.overlayAudioUrl;
         audioEl.load();
       }
-      audioEl.currentTime = 0;
+      audioEl.currentTime = clipToPlay.overlayAudioStartTime || 0;
       audioEl.play().catch(e => console.error("Audio playback failed", e));
     }
   };
 
   const handlePreviewCurrentSelection = () => {
     const tempClip: Clip = {
-        id: -1, 
-        start: start, 
-        end: end, 
+        id: -1,
+        start: start,
+        end: start + cutDuration,
         title: 'Preview',
         filters: filters,
         isMuted: isMuted,
         overlayAudioUrl: overlayAudioUrl || undefined,
+        overlayAudioStartTime: overlayAudioStartTime,
         sourceVideo: activeVideoIndex,
     };
     playClip(tempClip);
@@ -681,6 +683,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
           filters: filters,
           isMuted: true,
           overlayAudioUrl: audioUrl,
+          overlayAudioStartTime: overlayAudioStartTime,
           sourceVideo: -1, // Indicates a multi-source clip
           cuts: cuts,
         };
@@ -808,6 +811,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
       filters,
       isMuted,
       overlayAudioUrl: newOverlayUrl || undefined,
+      overlayAudioStartTime: overlayAudioStartTime,
       sourceVideo: activeVideoIndex,
     };
 
@@ -817,6 +821,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
     // Reset editing state
     setOverlayAudioFile(null);
     setOverlayAudioUrl(null);
+    setOverlayAudioStartTime(0);
     setIsMuted(false);
     setFilters(['none']);
     if (audioInputRef.current) audioInputRef.current.value = '';
@@ -1051,7 +1056,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
             </div>
           </div>
           <div className="flex justify-start">
-            <div ref={videoWrapperRef} className={cn("bg-black/90 backdrop-blur-sm rounded-xl overflow-hidden transition-all duration-300 shadow-2xl border border-border/20 relative", getAspectRatioClass(aspectRatio))} style={{ width: `${previewSize}%`, height: 'auto' }}>
+            <div ref={videoWrapperRef} className={cn("bg-black/90 backdrop-blur-sm rounded-xl overflow-hidden transition-all duration-300 shadow-2xl border border-border/20 relative", getAspectRatioClass(aspectRatio))} style={{ width: `${previewSize}%`, height: 'auto', maxHeight: '60vh' }}>
               <div className={cn("relative w-full h-full", getFilterClass(activeFilters))} style={getNightVisionStyle(activeFilters)}>
               {videoSources.map((source, index) => {
                 const isVisible = isPreviewPlaying && activeClipForPreview?.cuts
@@ -1384,6 +1389,20 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                           </Button>
                         </div>
                         {overlayAudioFile && <p className='text-xs text-muted-foreground truncate'>Current: {overlayAudioFile.name}</p>}
+                        {overlayAudioFile && (
+                          <div className="space-y-2">
+                            <Label htmlFor="overlay-audio-start-time" className="text-sm font-semibold">Start Time (s)</Label>
+                            <Input
+                              id="overlay-audio-start-time"
+                              type="number"
+                              value={overlayAudioStartTime.toFixed(2)}
+                              onChange={(e) => setOverlayAudioStartTime(parseFloat(e.target.value) || 0)}
+                              step="0.1"
+                              min="0"
+                              className="bg-secondary/50 border-border/50 focus:border-primary"
+                            />
+                          </div>
+                        )}
                       </div>
                     </AccordionContent>
                   </AccordionItem>

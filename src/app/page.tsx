@@ -22,6 +22,7 @@ export type Clip = {
   title: string;
   filters: VideoFilter[];
   overlayAudioUrl?: string;
+  overlayAudioStartTime?: number;
   isMuted: boolean;
   sourceVideo: number; // Index of the video in the videoUrls array. -1 for multi-cut clips
   cuts?: ClipCut[]; // Optional array for multi-cut sequences
