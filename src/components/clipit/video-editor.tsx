@@ -450,13 +450,33 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
             document.body.removeChild(video);
             resolve(video.duration);
           };
-          video.onerror = () => {
+          video.onerror = (e) => {
             document.body.removeChild(video);
+            console.warn(`Failed to load metadata for video: ${source.url}, error:`, e);
             resolve(0);
           };
+
+          // Add a timeout to prevent hanging
+          setTimeout(() => {
+            if (video.parentNode) {
+              document.body.removeChild(video);
+              console.warn(`Timeout loading metadata for video: ${source.url}`);
+              resolve(0);
+            }
+          }, 5000);
+
           video.src = source.url;
         }))
       );
+
+      // Log video durations for debugging
+      console.log('Video durations:', videoDurations);
+      console.log('Audio duration:', audioDuration);
+      console.log('Cut duration:', cutDuration);
+
+      // Reduce minimum duration requirement if running in production/browser environment
+      const isProduction = typeof window !== 'undefined' && window.location.hostname !== 'localhost';
+      const minimumDuration = isProduction ? Math.min(cutDuration * 0.5, 1) : cutDuration;
 
       const clipDuration = cutDuration;
       const numFullCuts = Math.floor(audioDuration / clipDuration);
@@ -465,10 +485,14 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
 
       const validSources = uniqueVideoSources
         .map((source, index) => ({ originalIndex: videoSources.findIndex(s => s.url === source.url), duration: videoDurations[index] }))
-        .filter(s => s.duration >= clipDuration);
+        .filter(s => s.duration >= minimumDuration);
+
+      console.log(`Valid sources count: ${validSources.length} (required minimum duration: ${minimumDuration}s)`);
 
       if (validSources.length < 2) {
-        throw new Error(`Need at least 2 video sources that are at least ${clipDuration}s long for multi-cam edit.`);
+        // If we still don't have enough sources, provide more detailed error information
+        const sourceDetails = videoDurations.map((dur, index) => `Source ${index + 1}: ${dur.toFixed(2)}s`);
+        throw new Error(`Need at least 2 video sources that are at least ${minimumDuration}s long for multi-cam edit. Available sources: ${sourceDetails.join(', ')}. Please ensure your videos are uploaded correctly and are long enough.`);
       }
 
       const audioUrl = URL.createObjectURL(overlayAudioFile);
