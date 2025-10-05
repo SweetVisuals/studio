@@ -1056,7 +1056,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
             </div>
           </div>
           <div className="flex justify-start">
-            <div ref={videoWrapperRef} className={cn("bg-black/90 backdrop-blur-sm rounded-xl overflow-hidden transition-all duration-300 shadow-2xl border border-border/20 relative", getAspectRatioClass(aspectRatio))} style={{ width: `${previewSize}%`, height: 'auto', maxHeight: '60vh' }}>
+            <div ref={videoWrapperRef} className={cn("bg-black/90 backdrop-blur-sm rounded-xl overflow-hidden transition-all duration-300 shadow-2xl border border-border/20 relative", getAspectRatioClass(aspectRatio))} style={{ width: `${previewSize}%`, maxHeight: '60vh' }}>
               <div className={cn("relative w-full h-full", getFilterClass(activeFilters))} style={getNightVisionStyle(activeFilters)}>
               {videoSources.map((source, index) => {
                 const isVisible = isPreviewPlaying && activeClipForPreview?.cuts
@@ -1069,7 +1069,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                     ref={(el) => {
                       if (el) videoRefs.current[index] = el;
                     }}
-                    className={cn("h-full w-full object-cover absolute inset-0", !isVisible && "opacity-0")}
+                    className={cn("h-full w-full object-contain absolute inset-0", !isVisible && "opacity-0")}
                     style={{
                       ...videoStyles[index],
                       zIndex: isVisible ? 1 : 0
