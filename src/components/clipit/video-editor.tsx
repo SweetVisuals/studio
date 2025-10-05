@@ -474,25 +474,40 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
       console.log('Audio duration:', audioDuration);
       console.log('Cut duration:', cutDuration);
 
-      // Reduce minimum duration requirement if running in production/browser environment
-      const isProduction = typeof window !== 'undefined' && window.location.hostname !== 'localhost';
-      const minimumDuration = isProduction ? Math.min(cutDuration * 0.5, 1) : cutDuration;
-
       const clipDuration = cutDuration;
       const numFullCuts = Math.floor(audioDuration / clipDuration);
       const remainder = audioDuration % clipDuration;
       const numCuts = remainder > 0 ? numFullCuts + 1 : numFullCuts;
 
-      const validSources = uniqueVideoSources
-        .map((source, index) => ({ originalIndex: videoSources.findIndex(s => s.url === source.url), duration: videoDurations[index] }))
-        .filter(s => s.duration >= minimumDuration);
+      // In production, be more lenient with duration requirements since video loading can be unreliable
+      const isProduction = typeof window !== 'undefined' && window.location.hostname !== 'localhost';
+      let validSources;
 
-      console.log(`Valid sources count: ${validSources.length} (required minimum duration: ${minimumDuration}s)`);
+      if (isProduction) {
+        // For production, just check that we have at least 2 sources, regardless of metadata loading
+        validSources = uniqueVideoSources
+          .map((source, index) => ({ originalIndex: videoSources.findIndex(s => s.url === source.url), duration: videoDurations[index] }))
+          .filter(s => s.duration > 0); // Just need some duration, be very lenient
+
+        // If we can't get any sources with metadata, just use all available sources as fallback
+        if (validSources.length < 2) {
+          console.log('Production fallback: Using all sources due to metadata loading issues');
+          validSources = uniqueVideoSources
+            .map((source, index) => ({ originalIndex: videoSources.findIndex(s => s.url === source.url), duration: Math.max(videoDurations[index], clipDuration) })); // Assume at least clipDuration length
+        }
+      } else {
+        // In development, be strict about duration requirements
+        validSources = uniqueVideoSources
+          .map((source, index) => ({ originalIndex: videoSources.findIndex(s => s.url === source.url), duration: videoDurations[index] }))
+          .filter(s => s.duration >= cutDuration);
+      }
+
+      console.log(`Valid sources count: ${validSources.length} (${isProduction ? 'production mode - lenient' : 'development mode - strict'})`);
 
       if (validSources.length < 2) {
         // If we still don't have enough sources, provide more detailed error information
         const sourceDetails = videoDurations.map((dur, index) => `Source ${index + 1}: ${dur.toFixed(2)}s`);
-        throw new Error(`Need at least 2 video sources that are at least ${minimumDuration}s long for multi-cam edit. Available sources: ${sourceDetails.join(', ')}. Please ensure your videos are uploaded correctly and are long enough.`);
+        throw new Error(`Need at least 2 video sources for multi-cam edit. Available sources: ${sourceDetails.join(', ')}. Please try different video files if this persists.`);
       }
 
       const audioUrl = URL.createObjectURL(overlayAudioFile);
