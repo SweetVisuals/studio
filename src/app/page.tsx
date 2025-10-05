@@ -6,7 +6,7 @@ import VideoUploader from '@/components/clipit/video-uploader';
 import VideoEditor from '@/components/clipit/video-editor';
 import { Globe } from '@/components/ui/globe';
 
-export type VideoFilter = 'none' | 'bw' | 'night-vision' | 'vhs' | 'grain';
+export type VideoFilter = 'none' | 'bw' | 'night-vision' | 'vhs' | 'grain' | 'noise';
 export type AspectRatio = '9:16' | '1:1' | '16:9' | 'source';
 
 export type ClipCut = {

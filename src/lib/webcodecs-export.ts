@@ -176,6 +176,9 @@ export class FrameProcessor {
         case 'grain':
           // For grain, we can't easily apply noise in canvas filter, so skip for now
           return 'none';
+        case 'noise':
+          // For noise, we can't easily apply noise in canvas filter, so skip for now
+          return 'none';
         default:
           return 'none';
       }

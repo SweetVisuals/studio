@@ -59,6 +59,7 @@ const filterOptions: { id: VideoFilter, label: string }[] = [
     { id: 'night-vision', label: 'Night Vision' },
     { id: 'vhs', label: 'VHS' },
     { id: 'grain', label: 'Grain' },
+    { id: 'noise', label: 'Noise' },
 ];
 
 export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSource }: VideoEditorProps) {
@@ -88,6 +89,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
   const [nightVisionColor, setNightVisionColor] = useState('#00ff00'); // Default green - matches the original hue-rotate(80deg) effect
   const [nightVisionOpacity, setNightVisionOpacity] = useState(100); // Default opacity 100%
   const [grainIntensity, setGrainIntensity] = useState(50); // Default grain intensity 50%
+  const [noiseIntensity, setNoiseIntensity] = useState(50); // Default noise intensity 50%
 
   // State for new side panel features
   const [sourceScaleFactors, setSourceScaleFactors] = useState<{[key: number]: number}>({});
@@ -372,6 +374,45 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
     };
   }, [timeUpdateHandler, activeVideoIndex]);
 
+  // Real-time time updates using requestAnimationFrame for smooth playback
+  useEffect(() => {
+    if (!isPreviewPlaying) return;
+
+    let animationFrameId: number;
+
+    const updateTime = () => {
+      const video = videoRefs.current[activeVideoIndexRef.current];
+      if (video && !video.paused && !video.seeking) {
+        const activeClip = activeClipForPreviewRef.current;
+        if (!activeClip) return;
+
+        const isMultiCut = activeClip.cuts && activeClip.cuts.length > 0;
+
+        if (!isMultiCut) {
+          // Single clip logic
+          setCurrentTime(video.currentTime - activeClip.start);
+        } else {
+          // Multi-cut logic: calculate total progress for linear seek bar
+          let totalProgress = 0;
+          for (let i = 0; i < currentCutIndexRef.current; i++) {
+            totalProgress += activeClip.cuts![i].end - activeClip.cuts![i].start;
+          }
+          totalProgress += Math.max(0, video.currentTime - activeClip.cuts![currentCutIndexRef.current].start);
+          setCurrentTime(totalProgress);
+        }
+      }
+      animationFrameId = requestAnimationFrame(updateTime);
+    };
+
+    animationFrameId = requestAnimationFrame(updateTime);
+
+    return () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+    };
+  }, [isPreviewPlaying, activeVideoIndex]);
+
   useEffect(() => {
     if (!isPreviewPlaying || !activeClipForPreview) {
       return;
@@ -396,7 +437,9 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
         const video = videoRefs.current[sourceVideoIndex];
         if (!video || !isPreviewPlayingRef.current) return;
 
-        video.currentTime = startTime;
+        // When resuming multi-cut playback, continue from current position
+        const resumeTime = currentTime > 0 ? startTime + (currentTime - activeClipForPreview.cuts!.slice(0, currentCutIndex).reduce((acc, c) => acc + (c.end - c.start), 0)) : startTime;
+        video.currentTime = resumeTime;
         video.muted = activeClipForPreview.isMuted;
         video.play().catch(e => {
           console.error("Multi-cut playback failed", e);
@@ -423,7 +466,9 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
       if (!video || !(isPreviewPlayingRef as any).current) return;
 
       video.pause();
-      video.currentTime = startTime;
+      // When resuming playback, continue from current position instead of start
+      const resumeTime = currentTime > 0 ? startTime + currentTime : startTime;
+      video.currentTime = resumeTime;
       video.muted = isMutedOverride;
 
       if (video.readyState >= 3) {
@@ -474,11 +519,25 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
 
   const playClip = (clipToPlay: Clip) => {
     if (isPreviewPlaying) {
-      stopPreview();
-      // If we clicked the same clip again, just stop.
-      // If we clicked a new clip, we want to start it after stopping the old one.
+      // If we clicked the same clip again, pause instead of stop (except for preview selection)
       if (activeClipForPreview?.id === clipToPlay.id) {
-          return;
+        if (clipToPlay.id === -1) {
+          // Preview selection - stop and reset
+          stopPreview();
+        } else {
+          // Regular clip - just pause
+          const video = videoRefs.current[activeVideoIndexRef.current];
+          const audio = overlayAudioRef.current;
+          if (video) {
+            video.pause();
+          }
+          if (audio) audio.pause();
+          setIsPreviewPlaying(false);
+        }
+        return;
+      } else {
+        // Different clip - stop the current one first
+        stopPreview();
       }
     }
 
@@ -953,7 +1012,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
     }
   };
 
-  const currentPreviewIcon = isPreviewPlaying ? <Pause /> : <Play />;
+  const currentPreviewIcon = activeClipForPreview ? <Pause /> : <Play />;
   const newClip = { // Used for audio upload logic
       id: -1,
       start: 0,
@@ -970,9 +1029,19 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 w-full p-4">
         {/* Left Panel: Video Sources & Clip List */}
         <Card className="flex flex-col p-4 bg-card/60 border-border/50 shadow-lg overflow-hidden">
-          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2 text-foreground/90">
-            <Film className="h-5 w-5 text-primary" /> Video Sources
-          </h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold flex items-center gap-2 text-foreground/90">
+              <Film className="h-5 w-5 text-primary" /> Video Sources
+            </h3>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => moreVideoInputRef.current?.click()}
+              className="h-8 text-sm"
+            >
+              <UploadCloud className="mr-2 h-4 w-4"/> Upload More
+            </Button>
+          </div>
           <div className="space-y-2 mb-4 max-h-[200px] overflow-y-auto pr-2">
             {videoSources.map((source, index) => (
               <div key={index} className="flex items-center gap-2 bg-secondary/50 rounded-lg p-2 border border-border/50">
@@ -1019,6 +1088,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
               nightVisionColor={nightVisionColor}
               nightVisionOpacity={nightVisionOpacity}
               grainIntensity={grainIntensity}
+              noiseIntensity={noiseIntensity}
             />
           </div>
         </Card>
@@ -1042,52 +1112,6 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                   <SelectItem value="10">10%</SelectItem>
                 </SelectContent>
               </Select>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => moreVideoInputRef.current?.click()}
-                className="h-8 text-sm"
-              >
-                <UploadCloud className="mr-2 h-4 w-4"/> Upload More
-              </Button>
-              <Dialog open={previewSourcesOpen} onOpenChange={setPreviewSourcesOpen}>
-                <DialogTrigger asChild>
-                  <Button variant="outline" size="sm" className="h-8 text-sm">
-                    <Film className="mr-2 h-4 w-4"/> Preview Sources
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="max-w-2xl">
-                  <DialogHeader>
-                    <DialogTitle>Preview Sources</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4">
-                    <p className="text-sm text-muted-foreground">Playing Source {previewActiveSource + 1}</p>
-                    <div className="w-full bg-black rounded-lg overflow-hidden relative">
-                      {videoSources.map((source, index) => (
-                        <video
-                          key={index}
-                          ref={(el) => {
-                            if (el) previewVideoRefs.current[index] = el;
-                          }}
-                          className={cn("w-full h-48 object-cover absolute inset-0", index !== previewActiveSource && "opacity-0")}
-                          style={{ zIndex: index === previewActiveSource ? 1 : 0 }}
-                          src={source.url}
-                          preload="auto"
-                        />
-                      ))}
-                    </div>
-                  </div>
-                </DialogContent>
-              </Dialog>
-              <input
-                id="video-upload-more"
-                type="file"
-                className="sr-only"
-                accept="video/mp4,video/quicktime,video/webm"
-                onChange={onVideoUpload}
-                multiple
-                ref={moreVideoInputRef}
-              />
             </div>
           </div>
           <div className={cn("sticky top-0 z-10 flex", previewSize < 100 ? "justify-center" : "justify-start")}>
@@ -1118,6 +1142,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
               })}
               {activeFilters && activeFilters.includes('vhs') && <div className="vhs-overlay"></div>}
               {activeFilters && activeFilters.includes('grain') && <div className="grain-overlay" style={{ opacity: grainIntensity / 100 }}></div>}
+              {activeFilters && activeFilters.includes('noise') && <div className="noise-overlay" style={{ opacity: noiseIntensity / 100 }}></div>}
             </div>
           </div>
         </div>
@@ -1333,13 +1358,37 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                             </p>
                           </div>
                         )}
+
+                        {filters.includes('noise') && (
+                          <div className="space-y-2 mt-4">
+                            <Label className="text-sm font-medium">Noise Intensity</Label>
+                            <div className="space-y-2">
+                              <Slider
+                                value={[noiseIntensity]}
+                                onValueChange={(value) => setNoiseIntensity(value[0])}
+                                min={0}
+                                max={100}
+                                step={1}
+                                className="w-full"
+                              />
+                              <div className="flex justify-between text-xs text-muted-foreground">
+                                <span>0%</span>
+                                <span>{noiseIntensity}%</span>
+                                <span>100%</span>
+                              </div>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              Adjust the intensity of the noise effect. Higher values add more digital noise to the video.
+                            </p>
+                          </div>
+                        )}
                       </div>
                     </AccordionContent>
                   </AccordionItem>
                 </Accordion>
                 <div className="bg-card/95 backdrop-blur-sm border-t border-border/50 p-4 space-y-3">
                   <Button onClick={handlePreviewCurrentSelection} className="w-full bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 shadow-lg">
-                    {currentPreviewIcon} {isPreviewPlaying && activeClipForPreview?.id === -1 ? 'Stop' : 'Preview Selection'}
+                    {currentPreviewIcon} {activeClipForPreview?.id === -1 ? 'Stop' : 'Preview Selection'}
                   </Button>
                   <Button onClick={addClip} variant="outline" className="w-full border-2 hover:bg-secondary/50">
                     <Plus className="mr-2 h-4 w-4" /> Add Clip Manually
@@ -1407,43 +1456,23 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                                 </Button>
                               </div>
                             </div>
-                            <div className="grid grid-cols-2 gap-2">
-                              <div className="flex items-center gap-1">
-                                <Label htmlFor={`scale-${index}`} className="text-xs flex-shrink-0">Scale:</Label>
-                                <Input
-                                  id={`scale-${index}`}
-                                  type="number"
-                                  value={((sourceScaleFactors[index] || 1.0) * 100).toFixed(0)}
-                                  onChange={(e) => {
-                                    const value = (parseFloat(e.target.value) || 100) / 100;
-                                    setSourceScaleFactors(prev => ({ ...prev, [index]: value }));
-                                  }}
-                                  step="1"
-                                  min="10"
-                                  max="500"
-                                  className="h-7 text-xs flex-1"
-                                  placeholder="100"
-                                />
-                                <span className="text-xs text-muted-foreground">%</span>
-                              </div>
-                              <div className="flex items-center gap-1">
-                                <Label htmlFor={`cut-duration-${index}`} className="text-xs flex-shrink-0">Cut Dur:</Label>
-                                <Input
-                                  id={`cut-duration-${index}`}
-                                  type="number"
-                                  value={(sourceCutDurations[index] || cutDuration).toFixed(1)}
-                                  onChange={(e) => {
-                                    const value = parseFloat(e.target.value) || cutDuration;
-                                    setSourceCutDurations(prev => ({ ...prev, [index]: value }));
-                                  }}
-                                  step="0.1"
-                                  min="0.1"
-                                  max="10"
-                                  className="h-7 text-xs flex-1"
-                                  placeholder={cutDuration.toFixed(1)}
-                                />
-                                <span className="text-xs text-muted-foreground">s</span>
-                              </div>
+                            <div className="flex items-center gap-1">
+                              <Label htmlFor={`scale-${index}`} className="text-xs flex-shrink-0">Scale:</Label>
+                              <Input
+                                id={`scale-${index}`}
+                                type="number"
+                                value={((sourceScaleFactors[index] || 1.0) * 100).toFixed(0)}
+                                onChange={(e) => {
+                                  const value = (parseFloat(e.target.value) || 100) / 100;
+                                  setSourceScaleFactors(prev => ({ ...prev, [index]: value }));
+                                }}
+                                step="1"
+                                min="10"
+                                max="500"
+                                className="h-7 text-xs flex-1"
+                                placeholder="100"
+                              />
+                              <span className="text-xs text-muted-foreground">%</span>
                             </div>
                           </div>
                         ))}
@@ -1453,7 +1482,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                 </Accordion>
                 <div className="bg-card/95 backdrop-blur-sm border-t border-border/50 p-4 space-y-3">
                   <Button onClick={handlePreviewCurrentSelection} className="w-full bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 shadow-lg">
-                    {currentPreviewIcon} {isPreviewPlaying && activeClipForPreview?.id === -1 ? 'Stop' : 'Preview Selection'}
+                    {currentPreviewIcon} {activeClipForPreview?.id === -1 ? 'Stop' : 'Preview Selection'}
                   </Button>
                   <Button onClick={addClip} variant="outline" className="w-full border-2 hover:bg-secondary/50">
                     <Plus className="mr-2 h-4 w-4" /> Add Clip Manually
@@ -1559,7 +1588,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                 </Accordion>
                 <div className="bg-card/95 backdrop-blur-sm border-t border-border/50 p-4 space-y-3">
                   <Button onClick={handlePreviewCurrentSelection} className="w-full bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 shadow-lg">
-                    {currentPreviewIcon} {isPreviewPlaying && activeClipForPreview?.id === -1 ? 'Stop' : 'Preview Selection'}
+                    {currentPreviewIcon} {activeClipForPreview?.id === -1 ? 'Stop' : 'Preview Selection'}
                   </Button>
                   <Button onClick={addClip} variant="outline" className="w-full border-2 hover:bg-secondary/50">
                     <Plus className="mr-2 h-4 w-4" /> Add Clip Manually
