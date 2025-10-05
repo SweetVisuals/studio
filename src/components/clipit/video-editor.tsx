@@ -659,7 +659,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
         const sourceSequence = generateRandomSequence(numCuts, validSources.length);
 
         for (let i = 0; i < numCuts; i++) {
-           const sourceIndex = sourceSequence[i];
+          const sourceIndex = sourceSequence[i];
             const sourceInfo = validSources[sourceIndex];
             // Use individual source cut duration if set, otherwise fall back to global
             const sourceSpecificDuration = sourceCutDurations[sourceInfo.originalIndex] || cutDuration;
@@ -696,6 +696,89 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
       toast({
         variant: 'destructive',
         title: 'Multi-cam Edit Failed',
+        description: (error as Error).message || 'An unexpected error occurred.',
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const createShortFormClips = async () => {
+    if (videoSources.length === 0) {
+      toast({ variant: 'destructive', title: 'Video Required', description: 'Please upload at least one video source.' });
+      return;
+    }
+
+    const activeSource = videoSources[activeVideoIndex];
+    if (!activeSource) {
+      toast({ variant: 'destructive', title: 'No Active Source', description: 'Please select a video source to cut.' });
+      return;
+    }
+
+    setIsLoading(true);
+    toast({ title: 'Processing', description: 'Cutting video into short-form clips...' });
+
+    try {
+      // Get the duration of the active video source
+      const videoDuration = await new Promise<number>((resolve, reject) => {
+        const video = document.createElement('video');
+        video.preload = 'metadata';
+        video.style.position = 'absolute';
+        video.style.left = '-9999px';
+        video.style.top = '-9999px';
+        document.body.appendChild(video);
+
+        video.onloadedmetadata = () => {
+          document.body.removeChild(video);
+          resolve(video.duration);
+        };
+
+        video.onerror = () => {
+          document.body.removeChild(video);
+          reject(new Error('Could not load video metadata.'));
+        };
+
+        video.src = activeSource.url;
+      });
+
+      console.log(`Active video duration: ${videoDuration}s`);
+      console.log(`Cut duration: ${cutDuration}s`);
+
+      const clipDuration = sourceCutDurations[activeVideoIndex] || cutDuration;
+      const numClips = Math.floor(videoDuration / clipDuration);
+
+      if (numClips === 0) {
+        throw new Error(`Video is too short for clips of ${clipDuration} seconds. Please reduce the cut duration or use a longer video.`);
+      }
+
+      const newClips: Clip[] = [];
+
+      for (let i = 0; i < numClips; i++) {
+        const startTime = i * clipDuration;
+        const endTime = Math.min((i + 1) * clipDuration, videoDuration);
+
+        const newClip: Clip = {
+          id: Date.now() + i,
+          start: startTime,
+          end: endTime,
+          title: `Short Clip ${clips.length + i + 1}`,
+          filters: filters,
+          isMuted: isMuted,
+          overlayAudioUrl: overlayAudioUrl || undefined,
+          sourceVideo: activeVideoIndex,
+        };
+
+        newClips.push(newClip);
+      }
+
+      setClips(prev => [...newClips, ...prev]);
+      toast({ title: 'Short Clips Created', description: `${numClips} short-form clips have been created from the selected video.` });
+
+    } catch (error) {
+      console.error('Short form clips creation failed:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Clip Creation Failed',
         description: (error as Error).message || 'An unexpected error occurred.',
       });
     } finally {
@@ -1033,7 +1116,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
 
             <div className="flex-1 overflow-y-auto pr-2 -mr-2"> {/* Added negative margin to counteract scrollbar padding */}
               <TabsContent value="clip-settings" className="space-y-6">
-                <Accordion type="multiple" defaultValue={["item-1", "item-2", "item-3"]} collapsible className="w-full">
+                <Accordion type="multiple" defaultValue={["item-1", "item-2", "item-3"]} className="w-full">
                   <AccordionItem value="item-1">
                     <AccordionTrigger className="text-base font-semibold text-foreground/90 hover:no-underline">
                       <div className="flex items-center gap-2">
@@ -1184,7 +1267,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
               </TabsContent>
 
               <TabsContent value="source-management" className="space-y-6">
-                <Accordion type="multiple" defaultValue={["item-1", "item-2"]} collapsible className="w-full">
+                <Accordion type="multiple" defaultValue={["item-1", "item-2"]} className="w-full">
                   <AccordionItem value="item-1">
                     <AccordionTrigger className="text-base font-semibold text-foreground/90 hover:no-underline">
                       <div className="flex items-center gap-2">
@@ -1282,7 +1365,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
               </TabsContent>
 
               <TabsContent value="audio-export" className="space-y-6">
-                <Accordion type="multiple" defaultValue={["item-1", "item-2"]} collapsible className="w-full">
+                <Accordion type="multiple" defaultValue={["item-1", "item-2"]} className="w-full">
                   <AccordionItem value="item-1">
                     <AccordionTrigger className="text-base font-semibold text-foreground/90 hover:no-underline">
                       <div className="flex items-center gap-2">
@@ -1364,6 +1447,10 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
               </Button>
               <Button onClick={addClip} variant="outline" className="w-full border-2 hover:bg-secondary/50">
                 <Plus className="mr-2 h-4 w-4" /> Add Clip Manually
+              </Button>
+              <Button onClick={createShortFormClips} disabled={isLoading || videoSources.length === 0} className="w-full bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 shadow-lg disabled:opacity-50">
+                {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Scissors className="mr-2 h-4 w-4" />}
+                {isLoading ? 'Working...' : 'Cut into Short Clips'}
               </Button>
               <Button onClick={createMultiCamEdit} disabled={isLoading || videoSources.length === 0 || !overlayAudioFile} className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 shadow-lg disabled:opacity-50">
                 {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Sparkles className="mr-2 h-4 w-4" />}
