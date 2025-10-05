@@ -1,4 +1,4 @@
-s  'use client';
+'use client';
 
 import { useState, useRef, useEffect, type ChangeEvent } from 'react';
 import Header from '@/components/clipit/header';
