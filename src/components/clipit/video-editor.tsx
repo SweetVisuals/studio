@@ -104,6 +104,9 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
   // State to track dynamic styles for scale application
   const [videoStyles, setVideoStyles] = useState<{[key: number]: any}>({});
 
+  // State for video durations
+  const [videoDurations, setVideoDurations] = useState<number[]>([]);
+
   // Update video styles when scale factors change
   useEffect(() => {
     const newStyles: {[key: number]: any} = {};
@@ -117,6 +120,23 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
     });
     setVideoStyles(newStyles);
   }, [sourceScaleFactors, videoSources]);
+
+  // Load video durations
+  useEffect(() => {
+    setVideoDurations(new Array(videoSources.length).fill(0));
+    videoSources.forEach((source, index) => {
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      video.onloadedmetadata = () => {
+        setVideoDurations(prev => {
+          const newDurations = [...prev];
+          newDurations[index] = video.duration;
+          return newDurations;
+        });
+      };
+      video.src = source.url;
+    });
+  }, [videoSources]);
 
   // Function to move video sources
   const moveSource = (fromIndex: number, direction: 'up' | 'down') => {
@@ -978,13 +998,32 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
 
   const handleFilterChange = (filterId: VideoFilter) => {
     setFilters(prev => {
-        const newFilters = prev.includes(filterId) 
+        const newFilters = prev.includes(filterId)
             ? prev.filter(f => f !== filterId)
             : [...prev, filterId];
         const otherFilters = newFilters.filter(f => f !== 'none');
         if (otherFilters.length === 0) return ['none'];
         return otherFilters;
     });
+  };
+
+  const handleRegenerateCut = (index: number) => {
+    if (!selectedClipForEditing?.cuts) return;
+    const cut = selectedClipForEditing.cuts[index];
+    const sourceDuration = videoDurations[cut.sourceVideo];
+    if (!sourceDuration || sourceDuration <= 0) return;
+
+    const duration = cut.end - cut.start;
+    const maxStart = Math.max(0, sourceDuration - duration);
+    const newStart = Math.random() * maxStart;
+    const newEnd = newStart + duration;
+
+    const newCuts = [...selectedClipForEditing.cuts];
+    newCuts[index] = { ...cut, start: newStart, end: newEnd };
+
+    setSelectedClipForEditing(prev => prev ? { ...prev, cuts: newCuts } : null);
+    setActiveClipForPreview(prev => prev?.id === selectedClipForEditing.id ? { ...prev, cuts: newCuts } : prev);
+    setClips(prev => prev.map(c => c.id === selectedClipForEditing?.id ? { ...c, cuts: newCuts } : c));
   };
 
   const getFilterClass = (f: VideoFilter[]) => {
@@ -1067,12 +1106,13 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
     }
   };
 
-  const getAspectRatioPadding = (ar: AspectRatio) => {
+  const getBaseDimensions = (ar: AspectRatio) => {
+    const baseWidth = 400;
     switch(ar) {
-        case '9:16': return '177.78%'; // 16/9 * 100%
-        case '1:1': return '100%';
-        case '16:9': return '56.25%'; // 9/16 * 100%
-        default: return '56.25%'; // 16:9 default
+        case '9:16': return { width: baseWidth, height: baseWidth * 16 / 9 };
+        case '1:1': return { width: baseWidth, height: baseWidth };
+        case '16:9': return { width: baseWidth, height: baseWidth * 9 / 16 };
+        default: return { width: baseWidth, height: baseWidth * 9 / 16 };
     }
   };
 
@@ -1186,8 +1226,8 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
               </Select>
             </div>
           </div>
-          <div className={cn("sticky top-0 z-10 flex", previewSize < 100 ? "justify-center" : "justify-start")}>
-            <div ref={videoWrapperRef} className="bg-black/90 backdrop-blur-sm rounded-xl overflow-hidden transition-all duration-300 shadow-2xl border border-border/20 relative" style={{ width: `${previewSize}%`, maxHeight: '60vh', paddingBottom: getAspectRatioPadding(aspectRatio) }}>
+          <div className="sticky top-0 z-10 flex justify-center">
+            <div ref={videoWrapperRef} className="bg-black/90 backdrop-blur-sm rounded-xl overflow-hidden transition-all duration-300 shadow-2xl border border-border/20 relative" style={{ width: `${getBaseDimensions(aspectRatio).width * (previewSize / 100)}px`, height: `${getBaseDimensions(aspectRatio).height * (previewSize / 100)}px` }}>
               <div className={cn("relative w-full h-full", getFilterClass(activeFilters))} style={getNightVisionStyle(activeFilters)}>
               {videoSources.map((source, index) => {
                 const isVisible = isPreviewPlaying && activeClipForPreview?.cuts
@@ -1247,6 +1287,10 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                 // Update the clip in the clips array
                 setClips(prev => prev.map(c => c.id === selectedClipForEditing?.id ? { ...c, cuts: newCuts } : c));
               }}
+              videoDurations={videoDurations}
+              onRegenerateCut={handleRegenerateCut}
+              videoSources={videoSources}
+              globalCutDuration={cutDuration}
             />
           )}
         </div>
