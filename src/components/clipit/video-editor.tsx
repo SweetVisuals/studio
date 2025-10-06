@@ -1067,6 +1067,15 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
     }
   };
 
+  const getAspectRatioPadding = (ar: AspectRatio) => {
+    switch(ar) {
+        case '9:16': return '177.78%'; // 16/9 * 100%
+        case '1:1': return '100%';
+        case '16:9': return '56.25%'; // 9/16 * 100%
+        default: return '56.25%'; // 16:9 default
+    }
+  };
+
   const currentPreviewIcon = activeClipForPreview ? <Pause /> : <Play />;
   const newClip = { // Used for audio upload logic
       id: -1,
@@ -1178,7 +1187,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
             </div>
           </div>
           <div className={cn("sticky top-0 z-10 flex", previewSize < 100 ? "justify-center" : "justify-start")}>
-            <div ref={videoWrapperRef} className={cn("bg-black/90 backdrop-blur-sm rounded-xl overflow-hidden transition-all duration-300 shadow-2xl border border-border/20 relative", getAspectRatioClass(aspectRatio))} style={{ width: `${previewSize}%`, height: 'auto', maxHeight: '60vh' }}>
+            <div ref={videoWrapperRef} className="bg-black/90 backdrop-blur-sm rounded-xl overflow-hidden transition-all duration-300 shadow-2xl border border-border/20 relative" style={{ width: `${previewSize}%`, maxHeight: '60vh', paddingBottom: getAspectRatioPadding(aspectRatio) }}>
               <div className={cn("relative w-full h-full", getFilterClass(activeFilters))} style={getNightVisionStyle(activeFilters)}>
               {videoSources.map((source, index) => {
                 const isVisible = isPreviewPlaying && activeClipForPreview?.cuts
@@ -1186,21 +1195,25 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                   : index === activeVideoIndex;
 
                 return (
-                  <video
+                  <div
                     key={index}
-                    ref={(el) => {
-                      if (el) videoRefs.current[index] = el;
-                    }}
-                    className={cn("h-full w-full object-cover absolute inset-0", !isVisible && "opacity-0")}
+                    className="absolute inset-0"
                     style={{
                       ...videoStyles[index],
                       zIndex: isVisible ? 1 : 0
                     }}
-                    controls={false}
-                    playsInline
-                    preload="auto"
-                    src={source.url}
-                  />
+                  >
+                    <video
+                      ref={(el) => {
+                        if (el) videoRefs.current[index] = el;
+                      }}
+                      className={cn("h-full w-full object-cover", !isVisible && "opacity-0")}
+                      controls={false}
+                      playsInline
+                      preload="auto"
+                      src={source.url}
+                    />
+                  </div>
                 );
               })}
               {activeFilters && activeFilters.includes('vhs') && <div className="vhs-overlay"></div>}
