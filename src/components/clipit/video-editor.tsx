@@ -73,6 +73,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
   const [activeClipForPreview, setActiveClipForPreview] = useState<Clip | null>(null);
   const [selectedClipForEditing, setSelectedClipForEditing] = useState<Clip | null>(null);
   const [currentCutIndex, setCurrentCutIndex] = useState(0);
+  const [currentCutTime, setCurrentCutTime] = useState(0);
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
 
 
@@ -154,6 +155,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
   const currentCutIndexRef = useRef<number>(0);
   const isPreviewPlayingRef = useRef<boolean>(false);
   const activeVideoIndexRef = useRef<number>(0);
+  const currentPlayingVideoRef = useRef<HTMLVideoElement | null>(null);
   const cutTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => { activeClipForPreviewRef.current = activeClipForPreview; }, [activeClipForPreview]);
@@ -223,12 +225,14 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
   }, [activeVideoIndex, videoSources, clips.length]);
 
   const stopPreview = () => {
-    const video = videoRefs.current[activeVideoIndexRef.current]; // Use active video from refs
+    const video = currentPlayingVideoRef.current || videoRefs.current[activeVideoIndexRef.current]; // Use current playing video
     const audio = overlayAudioRef.current;
     if(video) {
         video.pause();
     }
     if(audio) audio.pause();
+
+    currentPlayingVideoRef.current = null;
 
     // Clear any pending cut timeout
     if (cutTimeoutRef.current) {
@@ -240,6 +244,8 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
     if(isPreviewPlaying) {
       setActiveClipForPreview(null);
       setCurrentCutIndex(0);
+      setCurrentTime(0);
+      setCurrentCutTime(0);
       setIsPreviewPlaying(false);
     }
   }
@@ -274,17 +280,31 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
         const nextVideo = videoRefs.current[nextCut.sourceVideo];
         if (nextVideo) {
           const currentVideo = videoRefs.current[activeVideoIndexRef.current];
-          if (currentVideo) currentVideo.pause();
+          if (currentVideo) {
+            currentVideo.pause();
+            currentVideo.currentTime = 0; // Reset to prevent lingering timeupdate events
+          }
 
           nextVideo.currentTime = nextCut.start;
           nextVideo.muted = activeClip.isMuted;
 
-          const playPromise = nextVideo.play();
-          if (playPromise !== undefined) {
-            playPromise.catch(e => {
-              console.error("Timeout fallback cut transition failed", e);
-              stopPreview();
-            });
+          if (nextVideo.readyState >= 3) {
+            const playPromise = nextVideo.play();
+            if (playPromise !== undefined) {
+              playPromise.catch(e => {
+                console.error("Timeout fallback cut transition failed", e);
+                stopPreview();
+              });
+            }
+          } else {
+            const playWhenReady = () => {
+              nextVideo.play().catch(e => {
+                console.error("Timeout fallback cut transition failed", e);
+                stopPreview();
+              });
+              nextVideo.removeEventListener('canplay', playWhenReady);
+            };
+            nextVideo.addEventListener('canplay', playWhenReady, { once: true });
           }
         }
 
@@ -300,10 +320,9 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
 
   const timeUpdateHandler = useCallback(() => {
     const activeClip = activeClipForPreviewRef.current;
-    if (!isPreviewPlayingRef.current || !activeClip) return;
+    if (!isPreviewPlayingRef.current || !activeClip || !currentPlayingVideoRef.current) return;
 
-    const video = videoRefs.current[activeVideoIndexRef.current];
-    if (!video) return;
+    const video = currentPlayingVideoRef.current;
 
     const isMultiCut = activeClip.cuts && activeClip.cuts.length > 0;
 
@@ -338,17 +357,30 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
           // Switch videos behind the scenes - don't change activeVideoIndex to avoid UI lag
           const nextVideo = videoRefs.current[nextCut.sourceVideo];
           if (nextVideo) {
+            currentPlayingVideoRef.current = nextVideo;
             // Pause current video and switch to next seamlessly
             video.pause();
+            video.currentTime = 0; // Reset to prevent lingering timeupdate events
             nextVideo.currentTime = nextCut.start;
             nextVideo.muted = activeClip.isMuted;
 
-            const playPromise = nextVideo.play();
-            if (playPromise !== undefined) {
-              playPromise.catch(e => {
-                console.error("Cut transition failed", e);
-                stopPreview();
-              });
+            if (nextVideo.readyState >= 3) {
+              const playPromise = nextVideo.play();
+              if (playPromise !== undefined) {
+                playPromise.catch(e => {
+                  console.error("Cut transition failed", e);
+                  stopPreview();
+                });
+              }
+            } else {
+              const playWhenReady = () => {
+                nextVideo.play().catch(e => {
+                  console.error("Cut transition failed", e);
+                  stopPreview();
+                });
+                nextVideo.removeEventListener('canplay', playWhenReady);
+              };
+              nextVideo.addEventListener('canplay', playWhenReady, { once: true });
             }
 
             // Setup timeout for the next cut
@@ -364,15 +396,20 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
   }, [videoSources, stopPreview]);
 
   useEffect(() => {
-    const video = videoRefs.current[activeVideoIndex];
-    if (!video) return;
-
-    video.addEventListener('timeupdate', timeUpdateHandler);
+    videoRefs.current.forEach((video) => {
+      if (video) {
+        video.addEventListener('timeupdate', timeUpdateHandler);
+      }
+    });
 
     return () => {
-      video.removeEventListener('timeupdate', timeUpdateHandler);
+      videoRefs.current.forEach((video) => {
+        if (video) {
+          video.removeEventListener('timeupdate', timeUpdateHandler);
+        }
+      });
     };
-  }, [timeUpdateHandler, activeVideoIndex]);
+  }, [timeUpdateHandler]);
 
   // Real-time time updates using requestAnimationFrame for smooth playback
   useEffect(() => {
@@ -381,7 +418,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
     let animationFrameId: number;
 
     const updateTime = () => {
-      const video = videoRefs.current[activeVideoIndexRef.current];
+      const video = currentPlayingVideoRef.current;
       if (video && !video.paused && !video.seeking) {
         const activeClip = activeClipForPreviewRef.current;
         if (!activeClip) return;
@@ -392,13 +429,9 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
           // Single clip logic
           setCurrentTime(video.currentTime - activeClip.start);
         } else {
-          // Multi-cut logic: calculate total progress for linear seek bar
-          let totalProgress = 0;
-          for (let i = 0; i < currentCutIndexRef.current; i++) {
-            totalProgress += activeClip.cuts![i].end - activeClip.cuts![i].start;
-          }
-          totalProgress += Math.max(0, video.currentTime - activeClip.cuts![currentCutIndexRef.current].start);
-          setCurrentTime(totalProgress);
+          // Multi-cut logic: only update cut progress for UI
+          const cutProgress = Math.max(0, video.currentTime - activeClip.cuts![currentCutIndexRef.current].start);
+          setCurrentCutTime(cutProgress);
         }
       }
       animationFrameId = requestAnimationFrame(updateTime);
@@ -437,14 +470,28 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
         const video = videoRefs.current[sourceVideoIndex];
         if (!video || !isPreviewPlayingRef.current) return;
 
+        currentPlayingVideoRef.current = video;
+
         // When resuming multi-cut playback, continue from current position
         const resumeTime = currentTime > 0 ? startTime + (currentTime - activeClipForPreview.cuts!.slice(0, currentCutIndex).reduce((acc, c) => acc + (c.end - c.start), 0)) : startTime;
         video.currentTime = resumeTime;
         video.muted = activeClipForPreview.isMuted;
-        video.play().catch(e => {
-          console.error("Multi-cut playback failed", e);
-          stopPreview();
-        });
+
+        if (video.readyState >= 3) {
+          video.play().catch(e => {
+            console.error("Multi-cut playback failed", e);
+            stopPreview();
+          });
+        } else {
+          const playWhenReady = () => {
+            video.play().catch(e => {
+              console.error("Multi-cut playback failed", e);
+              stopPreview();
+            });
+            video.removeEventListener('canplay', playWhenReady);
+          };
+          video.addEventListener('canplay', playWhenReady, { once: true });
+        }
 
         // Setup timeout fallback for this cut
         setupCutTimeout(cut, currentCutIndex);
@@ -464,6 +511,8 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
     const playVideo = () => {
       const video = videoRefs.current[sourceVideoIndex];
       if (!video || !(isPreviewPlayingRef as any).current) return;
+
+      currentPlayingVideoRef.current = video;
 
       video.pause();
       // When resuming playback, continue from current position instead of start
@@ -500,8 +549,12 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
 
   const handleSeek = (value: number[]) => {
     const time = value[0];
-    const video = videoRefs.current[activeVideoIndex]; // Use active video from refs
+    const video = currentPlayingVideoRef.current || videoRefs.current[activeVideoIndex]; // Use current playing video
     if (video) {
+      if (activeClipForPreview?.cuts) {
+        // Multi-cut - disable seeking
+        return;
+      }
       if (activeClipForPreview && !activeClipForPreview.cuts) {
         // Single clip preview - time is relative
         video.currentTime = activeClipForPreview.start + time;
@@ -544,6 +597,8 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
     setActiveClipForPreview(clipToPlay);
     setSelectedClipForEditing(clipToPlay);
     setCurrentCutIndex(0);
+    setCurrentTime(0);
+    setCurrentCutTime(0);
     setIsPreviewPlaying(true);
 
     const audioEl = overlayAudioRef.current;
@@ -1153,7 +1208,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
             step={0.01}
             value={[currentTime]}
             onValueChange={handleSeek}
-            disabled={!!activeClipForPreview?.cuts}
+            disabled={false}
             className="w-full [&_[role=slider]]:bg-primary [&_[role=slider]]:border-primary [&_[role=slider]]:shadow-lg"
           />
           <div className="flex justify-between text-sm text-muted-foreground font-mono bg-secondary/30 rounded-lg px-3 py-2">
