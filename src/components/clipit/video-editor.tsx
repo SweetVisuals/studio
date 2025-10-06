@@ -1096,6 +1096,14 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
             >
               <UploadCloud className="mr-2 h-4 w-4"/> Upload More
             </Button>
+            <input
+              type="file"
+              accept="video/*"
+              multiple
+              ref={moreVideoInputRef}
+              onChange={onVideoUpload}
+              className="sr-only"
+            />
           </div>
           <div className="space-y-2 mb-4 max-h-[200px] overflow-y-auto pr-2">
             {videoSources.map((source, index) => (
