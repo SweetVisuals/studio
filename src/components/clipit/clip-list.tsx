@@ -276,6 +276,22 @@ export default function ClipList({
   const exportClip = async (clip: Clip, fromQueue = false) => {
     setExportingClipId(clip.id);
     setExportProgress(0);
+const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+    if (isMobile) {
+      // Check for complex clips that might fail on mobile
+      const hasComplexFilters = clip.filters && clip.filters.some(f => ['grain', 'noise', 'night-vision'].includes(f));
+      const isMultiCut = clip.cuts && clip.cuts.length > 1;
+
+      if (hasComplexFilters || isMultiCut) {
+        toast({
+          title: 'Mobile Export Notice',
+          description: 'Complex clips may take longer on mobile. Consider using a desktop for best results.',
+          duration: 5000
+        });
+      }
+    }
+
     if (!fromQueue) {
       toast({ title: `Exporting "${clip.title}"...`, description: 'Please wait, this can take a moment.' });
     }
@@ -294,7 +310,10 @@ export default function ClipList({
       }
     } catch (error) {
       console.error('Export failed:', error);
-      toast({ variant: 'destructive', title: 'Export failed', description: (error as Error).message });
+      const errorMessage = isMobile
+        ? 'Export failed. Try using a desktop browser for complex clips, or simplify filters.'
+        : (error as Error).message;
+      toast({ variant: 'destructive', title: 'Export failed', description: errorMessage });
       setExportingClipId(null);
     }
   };
@@ -545,13 +564,21 @@ export default function ClipList({
   };
 
   const exportClipWithMediaRecorder = async (clip: Clip) => {
-    // Fallback implementation - identical to the original for comparison
+    // Mobile-optimized fallback implementation
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
     const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d', { willReadFrequently: true, alpha: false });
+    const context = canvas.getContext('2d', {
+      willReadFrequently: true,
+      alpha: false,
+      // Reduce memory usage on mobile
+      ...(isMobile && { powerPreference: 'low-power' })
+    });
     if (!context) throw new Error('Could not get canvas context');
 
-    context.imageSmoothingEnabled = false;
-    context.imageSmoothingQuality = 'low';
+    // Optimize for mobile performance
+    context.imageSmoothingEnabled = isMobile ? false : true;
+    context.imageSmoothingQuality = isMobile ? 'low' : 'medium';
     context.globalCompositeOperation = 'copy';
 
     const firstVidSourceIndex = clip.cuts && clip.cuts.length > 0 ? clip.cuts[0].sourceVideo : clip.sourceVideo;
@@ -589,7 +616,7 @@ export default function ClipList({
     const cuts = clip.cuts || [{ sourceVideo: clip.sourceVideo, start: clip.start, end: clip.end }];
     const totalDuration = cuts.reduce((acc, cut) => acc + (cut.end - cut.start), 0);
 
-    const exportFrameRateAdjusted = exportFrameRate > 30 ? 30 : exportFrameRate;
+    const exportFrameRateAdjusted = isMobile ? Math.min(exportFrameRate, 24) : (exportFrameRate > 30 ? 30 : exportFrameRate);
     const canvasStream = canvas.captureStream(exportFrameRateAdjusted);
     const videoTrack = canvasStream.getVideoTracks()[0];
     const audioStream = mainAudioDestination.stream;
@@ -598,7 +625,7 @@ export default function ClipList({
     const combinedStream = new MediaStream([videoTrack]);
     if(audioTrack) combinedStream.addTrack(audioTrack);
 
-    const recorderConfig = getMediaRecorderConfig(exportFormat, exportQuality);
+    const recorderConfig = getMediaRecorderConfig(exportFormat, isMobile ? 'low' : exportQuality);
     const recorder = new MediaRecorder(combinedStream, recorderConfig);
 
     const exportTimeout = setTimeout(() => {
@@ -676,58 +703,78 @@ export default function ClipList({
             return;
           }
 
-          context.clearRect(0, 0, canvas.width, canvas.height);
+          try {
+            context.clearRect(0, 0, canvas.width, canvas.height);
 
-          // Apply filters to the canvas context
-          context.filter = clip.filters && clip.filters.length > 0 && !clip.filters.includes('none')
-            ? clip.filters.map(filter => {
-                switch (filter) {
-                  case 'bw': return 'grayscale(100%)';
-                  case 'night-vision':
-                    const opacityFactor = nightVisionOpacity / 100;
-                    if (nightVisionColor === '#default') {
-                      // Interpolate filter values based on opacity
-                      const grayscale = 100 * opacityFactor; // 0% to 100%
-                      const brightness = 1.0 + (0.2 * opacityFactor); // 1.0 to 1.2
-                      const sepia = 100 * opacityFactor; // 0% to 100%
-                      const saturate = 100 + (100 * opacityFactor); // 100% to 200%
-                      return `grayscale(${grayscale}%) brightness(${brightness}) sepia(${sepia}%) hue-rotate(80deg) saturate(${saturate}%)`;
-                    } else {
-                      // Convert hex color to HSL for hue-rotate
-                      const hexToHsl = (hex: string) => {
-                        const r = parseInt(hex.slice(1, 3), 16) / 255;
-                        const g = parseInt(hex.slice(3, 5), 16) / 255;
-                        const b = parseInt(hex.slice(5, 7), 16) / 255;
-
-                        const max = Math.max(r, g, b);
-                        const min = Math.min(r, g, b);
-                        let h = 0;
-                        let s = 0;
-                        const l = (max + min) / 2;
-
-                        if (max !== min) {
-                          const d = max - min;
-                          s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-                          switch (max) {
-                            case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-                            case g: h = (b - r) / d + 2; break;
-                            case b: h = (r - g) / d + 4; break;
-                          }
-                          h /= 6;
-                        }
-
-                        return [h * 360, s * 100, l * 100];
-                      };
-
-                      const [h] = hexToHsl(nightVisionColor);
-                      // Interpolate filter values based on opacity
-                      const grayscale = 100 * opacityFactor; // 0% to 100%
-                      const brightness = 1.0 + (0.2 * opacityFactor); // 1.0 to 1.2
-                      const sepia = 100 * opacityFactor; // 0% to 100%
-                      const saturate = 100 + (100 * opacityFactor); // 100% to 200%
-                      return `grayscale(${grayscale}%) brightness(${brightness}) sepia(${sepia}%) hue-rotate(${h}deg) saturate(${saturate}%)`;
+            // Apply filters to the canvas context (simplified for mobile)
+            if (isMobile) {
+              // On mobile, use simpler filters to avoid performance issues
+              context.filter = clip.filters && clip.filters.length > 0 && !clip.filters.includes('none')
+                ? clip.filters.map(filter => {
+                    switch (filter) {
+                      case 'bw': return 'grayscale(100%)';
+                      case 'night-vision': return 'grayscale(100%) brightness(1.2) sepia(100%) hue-rotate(80deg) saturate(200%)';
+                      case 'vhs': return 'contrast(1.1) brightness(1.1)';
+                      default: return 'none';
                     }
-                  case 'vhs': return 'none'; // VHS effect handled separately with overlays
+                  }).filter(f => f !== 'none').join(' ')
+                : 'none';
+            } else {
+              // Full filter support for desktop
+              context.filter = clip.filters && clip.filters.length > 0 && !clip.filters.includes('none')
+                ? clip.filters.map(filter => {
+                    switch (filter) {
+                      case 'bw': return 'grayscale(100%)';
+                      case 'night-vision':
+                        const opacityFactor = nightVisionOpacity / 100;
+                        if (nightVisionColor === '#default') {
+                          // Interpolate filter values based on opacity
+                          const grayscale = 100 * opacityFactor; // 0% to 100%
+                          const brightness = 1.0 + (0.2 * opacityFactor); // 1.0 to 1.2
+                          const sepia = 100 * opacityFactor; // 0% to 100%
+                          const saturate = 100 + (100 * opacityFactor); // 100% to 200%
+                          return `grayscale(${grayscale}%) brightness(${brightness}) sepia(${sepia}%) hue-rotate(80deg) saturate(${saturate}%)`;
+                        } else {
+                          // Convert hex color to HSL for hue-rotate
+                          const hexToHsl = (hex: string) => {
+                            const r = parseInt(hex.slice(1, 3), 16) / 255;
+                            const g = parseInt(hex.slice(3, 5), 16) / 255;
+                            const b = parseInt(hex.slice(5, 7), 16) / 255;
+
+                            const max = Math.max(r, g, b);
+                            const min = Math.min(r, g, b);
+                            let h = 0;
+                            let s = 0;
+                            const l = (max + min) / 2;
+
+                            if (max !== min) {
+                              const d = max - min;
+                              s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+                              switch (max) {
+                                case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+                                case g: h = (b - r) / d + 2; break;
+                                case b: h = (r - g) / d + 4; break;
+                              }
+                              h /= 6;
+                            }
+
+                            return [h * 360, s * 100, l * 100];
+                          };
+
+                          const [h] = hexToHsl(nightVisionColor);
+                          // Interpolate filter values based on opacity
+                          const grayscale = 100 * opacityFactor; // 0% to 100%
+                          const brightness = 1.0 + (0.2 * opacityFactor); // 1.0 to 1.2
+                          const sepia = 100 * opacityFactor; // 0% to 100%
+                          const saturate = 100 + (100 * opacityFactor); // 100% to 200%
+                          return `grayscale(${grayscale}%) brightness(${brightness}) sepia(${sepia}%) hue-rotate(${h}deg) saturate(${saturate}%)`;
+                        }
+                      case 'vhs': return 'contrast(1.1) brightness(1.1) saturate(1.2)';
+                      case 'grain': return 'none'; // Grain not supported in canvas filter
+                      case 'noise': return 'none'; // Noise not supported in canvas filter
+                      default: return 'none';
+                    }
+case 'vhs': return 'none'; // VHS effect handled separately with overlays
                   case 'grain': return 'none'; // Grain not supported in canvas filter
                   case 'noise': return 'none'; // Noise not supported in canvas filter
                   default: return 'none';
@@ -735,26 +782,34 @@ export default function ClipList({
               }).filter(f => f !== 'none').join(' ')
             : 'none';
 
-          const scale = Math.min(canvas.width / videoElement.videoWidth, canvas.height / videoElement.videoHeight);
-          const scaledWidth = videoElement.videoWidth * scale;
-          const scaledHeight = videoElement.videoHeight * scale;
-          const offsetX = (canvas.width - scaledWidth) / 2;
-          const offsetY = (canvas.height - scaledHeight) / 2;
+            const scale = Math.min(canvas.width / videoElement.videoWidth, canvas.height / videoElement.videoHeight);
+            const scaledWidth = videoElement.videoWidth * scale;
+            const scaledHeight = videoElement.videoHeight * scale;
+            const offsetX = (canvas.width - scaledWidth) / 2;
+            const offsetY = (canvas.height - scaledHeight) / 2;
 
-          try {
             context.drawImage(videoElement, offsetX, offsetY, scaledWidth, scaledHeight);
+
+            // Reset filter for next frame
+            context.filter = 'none';
+
           } catch (e) {
             console.warn('Frame drawing error:', e);
+            // On mobile, continue processing even if a frame fails
+            if (isMobile) {
+              console.log('Continuing export despite frame error on mobile');
+            } else {
+              throw e; // Re-throw on desktop for proper error handling
+            }
           }
 
-          // Reset filter for next frame
+// Reset filter for next frame
           context.filter = 'none';
 
           // Apply VHS effects if VHS filter is active
           if (clip.filters && clip.filters.includes('vhs')) {
             applyVhsEffectsToCanvas(context, canvas, time);
           }
-
           if (videoElement.currentTime < cut.end) {
             videoElement.requestVideoFrameCallback(drawFrame);
           } else {

@@ -1705,14 +1705,27 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                       <div className="space-y-3">
                         <div className="flex items-center gap-2">
                           <Button onClick={() => audioInputRef.current?.click()} variant="outline" className="w-full">
-                            <Upload /> {overlayAudioFile ? 'Change' : 'Upload'}
+                            <Upload /> {overlayAudioFile ? 'Change' : 'Upload Audio'}
                           </Button>
-                          <input type="file" accept='audio/*' ref={audioInputRef} onChange={handleAudioUpload} className='sr-only'/>
+                          <input
+                            type="file"
+                            accept='audio/mpeg,audio/wav,audio/ogg,audio/mp4,audio/aac,audio/flac'
+                            ref={audioInputRef}
+                            onChange={handleAudioUpload}
+                            className='sr-only'
+                            capture={false} // Explicitly disable capture to force file picker
+                          />
                           <Button variant="outline" size="icon" onClick={() => setIsMuted(!isMuted)} disabled={!!overlayAudioUrl}>
                             {isMuted ? <VolumeX className='text-destructive'/> : <Volume2 />}
                           </Button>
                         </div>
                         {overlayAudioFile && <p className='text-xs text-muted-foreground truncate'>Current: {overlayAudioFile.name}</p>}
+                        {!overlayAudioFile && (
+                          <p className='text-xs text-muted-foreground'>
+                            Supports MP3, WAV, OGG, AAC, FLAC files
+                            {/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) && ' • On mobile, tap "Upload Audio" and select "Browse" to choose audio files'}
+                          </p>
+                        )}
                         {overlayAudioFile && (
                           <div className="space-y-2">
                             <Label htmlFor="overlay-audio-start-time" className="text-sm font-semibold">Start Time (s)</Label>

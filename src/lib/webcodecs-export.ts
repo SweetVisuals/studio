@@ -7,6 +7,18 @@ import { Output, Mp4OutputFormat, BufferTarget, VideoSampleSource, AudioBufferSo
 
 // Check WebCodecs support (still used for frame processing)
 export function checkWebCodecsSupport(): { supported: boolean; videoEncoder: boolean; audioEncoder: boolean } {
+  // On mobile devices, WebCodecs support is limited and often unreliable
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+  if (isMobile) {
+    // Force fallback to MediaRecorder on mobile for better compatibility
+    return {
+      supported: false,
+      videoEncoder: false,
+      audioEncoder: false
+    };
+  }
+
   const videoEncoder = 'VideoEncoder' in window;
   const audioEncoder = 'AudioEncoder' in window;
 
