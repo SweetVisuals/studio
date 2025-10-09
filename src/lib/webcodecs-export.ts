@@ -86,8 +86,9 @@ export class FrameProcessor {
       // Fast clear
       this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-      // Apply filters to the canvas context
-      this.ctx.filter = this.getFilterString(filters);
+      // Apply filters to the canvas context (excluding VHS which needs special handling)
+      const nonVhsFilters = filters.filter(f => f !== 'vhs');
+      this.ctx.filter = this.getFilterString(nonVhsFilters);
 
       // Calculate scaling to fill canvas (object-cover behavior) while maintaining aspect ratio
       const scaleX = this.canvas.width / this.videoElement.videoWidth;
@@ -108,6 +109,11 @@ export class FrameProcessor {
       // Reset filter for next frame
       this.ctx.filter = 'none';
 
+      // Apply VHS effects if VHS filter is active
+      if (filters.includes('vhs')) {
+        this.applyVhsEffects(time);
+      }
+
       // Create VideoFrame from canvas
       return new VideoFrame(this.canvas, {
         timestamp: time * 1000000, // Convert to microseconds
@@ -117,6 +123,111 @@ export class FrameProcessor {
       console.error('Frame rendering error:', error);
       return null;
     }
+  }
+
+  private applyVhsEffects(time: number): void {
+    const canvas = this.canvas;
+    const ctx = this.ctx;
+
+    // Save the current state
+    ctx.save();
+
+    // Apply basic VHS color adjustment
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.filter = 'contrast(1.1) brightness(1.1) saturate(1.2)';
+
+    // Create a temporary canvas to apply the filter
+    const tempCanvas = new OffscreenCanvas(canvas.width, canvas.height);
+    const tempCtx = tempCanvas.getContext('2d')!;
+    tempCtx.drawImage(canvas, 0, 0);
+
+    // Apply filter to temp canvas
+    tempCtx.filter = 'contrast(1.1) brightness(1.1) saturate(1.2)';
+    tempCtx.drawImage(tempCanvas, 0, 0);
+    tempCtx.filter = 'none';
+
+    // Clear and draw the filtered image back
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(tempCanvas, 0, 0);
+
+    // Reset filter
+    ctx.filter = 'none';
+
+    // Add scanlines effect
+    this.applyScanlines(time);
+
+    // Add color glitch effect
+    this.applyColorGlitch(time);
+
+    // Restore the context state
+    ctx.restore();
+  }
+
+  private applyScanlines(time: number): void {
+    const ctx = this.ctx;
+    const canvas = this.canvas;
+
+    // Create animated scanlines based on time
+    const scanlineHeight = 2;
+    const scanlineSpacing = 4;
+    const offset = (time * 50) % scanlineSpacing; // Animate based on time
+
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.globalAlpha = 0.3;
+
+    for (let y = -offset; y < canvas.height; y += scanlineSpacing) {
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, y, canvas.width, scanlineHeight);
+    }
+
+    // Reset
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1.0;
+  }
+
+  private applyColorGlitch(time: number): void {
+    const ctx = this.ctx;
+    const canvas = this.canvas;
+
+    // Create vintage VHS color degradation effect
+    ctx.globalCompositeOperation = 'overlay';
+    ctx.globalAlpha = 0.15;
+
+    // Create subtle color shifts for vintage look
+    const shiftX = Math.sin(time * 3) * 1;
+    const shiftY = Math.cos(time * 4) * 0.5;
+
+    // Vintage color overlay - more muted and tape-like
+    const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+    gradient.addColorStop(0, '#8B4513');    // Saddle brown (tape degradation)
+    gradient.addColorStop(0.3, '#DAA520');  // Goldenrod (warm vintage tone)
+    gradient.addColorStop(0.7, '#696969');  // Dim gray (tape wear)
+    gradient.addColorStop(1, '#8B4513');    // Saddle brown
+
+    ctx.save();
+    ctx.translate(shiftX, shiftY);
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+
+    // Add subtle vignette effect for vintage look
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.globalAlpha = 0.1;
+
+    const vignetteGradient = ctx.createRadialGradient(
+      canvas.width / 2, canvas.height / 2, 0,
+      canvas.width / 2, canvas.height / 2, Math.max(canvas.width, canvas.height) / 2
+    );
+    vignetteGradient.addColorStop(0, 'transparent');
+    vignetteGradient.addColorStop(0.7, 'transparent');
+    vignetteGradient.addColorStop(1, '#2F1B14'); // Dark brown vignette
+
+    ctx.fillStyle = vignetteGradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Reset
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1.0;
   }
 
   private getFilterString(filters: VideoFilter[]): string {
@@ -171,8 +282,8 @@ export class FrameProcessor {
             return `grayscale(${grayscale}%) brightness(${brightness}) sepia(${sepia}%) hue-rotate(${h}deg) saturate(${saturate}%)`;
           }
         case 'vhs':
-          // VHS effect using canvas operations - simplified CSS approximation
-          return 'contrast(1.1) brightness(1.1) saturate(1.2)';
+          // VHS effect is now handled by applyVhsEffects method
+          return 'none';
         case 'grain':
           // For grain, we can't easily apply noise in canvas filter, so skip for now
           return 'none';

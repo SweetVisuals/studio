@@ -92,6 +92,13 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
   const [grainIntensity, setGrainIntensity] = useState(50); // Default grain intensity 50%
   const [noiseIntensity, setNoiseIntensity] = useState(50); // Default noise intensity 50%
 
+  // Local state for free-form input values
+  const [startTimeInput, setStartTimeInput] = useState(start.toFixed(2));
+  const [endTimeInput, setEndTimeInput] = useState(end.toFixed(2));
+  const [cutDurationInput, setCutDurationInput] = useState(cutDuration.toString());
+  const [overlayAudioStartTimeInput, setOverlayAudioStartTimeInput] = useState(overlayAudioStartTime.toFixed(2));
+  const [scaleInputs, setScaleInputs] = useState<{[key: number]: string}>({});
+
   // State for new side panel features
   const [sourceScaleFactors, setSourceScaleFactors] = useState<{[key: number]: number}>({});
   const [exportFormat, setExportFormat] = useState<'mp4' | 'webm'>('mp4');
@@ -119,6 +126,32 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
       };
     });
     setVideoStyles(newStyles);
+  }, [sourceScaleFactors, videoSources]);
+
+  // Sync local input states with main state
+  useEffect(() => {
+    setStartTimeInput(start.toFixed(2));
+  }, [start]);
+
+  useEffect(() => {
+    setEndTimeInput(end.toFixed(2));
+  }, [end]);
+
+  useEffect(() => {
+    setCutDurationInput(cutDuration.toString());
+  }, [cutDuration]);
+
+  useEffect(() => {
+    setOverlayAudioStartTimeInput(overlayAudioStartTime.toFixed(2));
+  }, [overlayAudioStartTime]);
+
+  useEffect(() => {
+    const newScaleInputs: {[key: number]: string} = {};
+    videoSources.forEach((_, index) => {
+      const scale = sourceScaleFactors[index] || 1.0;
+      newScaleInputs[index] = (scale * 100).toFixed(0);
+    });
+    setScaleInputs(newScaleInputs);
   }, [sourceScaleFactors, videoSources]);
 
   // Load video durations
@@ -920,6 +953,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
           filters: filters,
           isMuted: isMuted,
           overlayAudioUrl: overlayAudioUrl || undefined,
+          overlayAudioStartTime: overlayAudioStartTime,
           sourceVideo: activeVideoIndex,
         };
 
@@ -1324,11 +1358,35 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
                           <Label htmlFor="start-time" className="text-sm font-semibold">Start (s)</Label>
-                          <Input id="start-time" type="number" value={start.toFixed(2)} onChange={(e) => setStart(parseFloat(e.target.value) || 0)} step="0.1" min="0" max={duration} className="bg-secondary/50 border-border/50 focus:border-primary" />
+                          <Input
+                            id="start-time"
+                            type="text"
+                            value={startTimeInput}
+                            onChange={(e) => setStartTimeInput(e.target.value)}
+                            onBlur={() => setStart(parseFloat(startTimeInput) || 0)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                setStart(parseFloat(startTimeInput) || 0);
+                              }
+                            }}
+                            className="bg-secondary/50 border-border/50 focus:border-primary"
+                          />
                         </div>
                         <div className="space-y-2">
                           <Label htmlFor="end-time" className="text-sm font-semibold">End (s)</Label>
-                          <Input id="end-time" type="number" value={end.toFixed(2)} onChange={(e) => setEnd(parseFloat(e.target.value) || 0)} step="0.1" min={start} max={duration} className="bg-secondary/50 border-border/50 focus:border-primary"/>
+                          <Input
+                            id="end-time"
+                            type="text"
+                            value={endTimeInput}
+                            onChange={(e) => setEndTimeInput(e.target.value)}
+                            onBlur={() => setEnd(parseFloat(endTimeInput) || 0)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                setEnd(parseFloat(endTimeInput) || 0);
+                              }
+                            }}
+                            className="bg-secondary/50 border-border/50 focus:border-primary"
+                          />
                         </div>
                       </div>
                     </AccordionContent>
@@ -1535,7 +1593,18 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                     <AccordionContent className="pt-4">
                       <div className="space-y-3">
                         <Label htmlFor="cut-duration" className="text-sm">Global Cut Duration (s)</Label>
-                        <Input id="cut-duration" type="number" value={cutDuration} onChange={(e) => setCutDuration(parseFloat(e.target.value) || 2)} step="0.1" min="0.1" />
+                        <Input
+                          id="cut-duration"
+                          type="text"
+                          value={cutDurationInput}
+                          onChange={(e) => setCutDurationInput(e.target.value)}
+                          onBlur={() => setCutDuration(parseFloat(cutDurationInput) || 2)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              setCutDuration(parseFloat(cutDurationInput) || 2);
+                            }
+                          }}
+                        />
                       </div>
                     </AccordionContent>
                   </AccordionItem>
@@ -1580,15 +1649,21 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                               <Label htmlFor={`scale-${index}`} className="text-xs flex-shrink-0">Scale:</Label>
                               <Input
                                 id={`scale-${index}`}
-                                type="number"
-                                value={((sourceScaleFactors[index] || 1.0) * 100).toFixed(0)}
+                                type="text"
+                                value={scaleInputs[index] || '100'}
                                 onChange={(e) => {
-                                  const value = (parseFloat(e.target.value) || 100) / 100;
+                                  setScaleInputs(prev => ({ ...prev, [index]: e.target.value }));
+                                }}
+                                onBlur={() => {
+                                  const value = (parseFloat(scaleInputs[index] || '100') || 100) / 100;
                                   setSourceScaleFactors(prev => ({ ...prev, [index]: value }));
                                 }}
-                                step="1"
-                                min="10"
-                                max="500"
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    const value = (parseFloat(scaleInputs[index] || '100') || 100) / 100;
+                                    setSourceScaleFactors(prev => ({ ...prev, [index]: value }));
+                                  }
+                                }}
                                 className="h-7 text-xs flex-1"
                                 placeholder="100"
                               />
@@ -1643,11 +1718,15 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
                             <Label htmlFor="overlay-audio-start-time" className="text-sm font-semibold">Start Time (s)</Label>
                             <Input
                               id="overlay-audio-start-time"
-                              type="number"
-                              value={overlayAudioStartTime.toFixed(2)}
-                              onChange={(e) => setOverlayAudioStartTime(parseFloat(e.target.value) || 0)}
-                              step="0.1"
-                              min="0"
+                              type="text"
+                              value={overlayAudioStartTimeInput}
+                              onChange={(e) => setOverlayAudioStartTimeInput(e.target.value)}
+                              onBlur={() => setOverlayAudioStartTime(parseFloat(overlayAudioStartTimeInput) || 0)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  setOverlayAudioStartTime(parseFloat(overlayAudioStartTimeInput) || 0);
+                                }
+                              }}
                               className="bg-secondary/50 border-border/50 focus:border-primary"
                             />
                           </div>

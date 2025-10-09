@@ -265,7 +265,7 @@ export default function Timeline({ cuts, totalDuration, onCutsChange, videoDurat
               <div className="truncate px-1 flex items-center justify-between">
                 {editingDurationIndex === index && cut.sourceVideo !== -1 ? (
                   <input
-                    type="number"
+                    type="text"
                     value={editingDurationValue}
                     onChange={(e) => setEditingDurationValue(e.target.value)}
                     onBlur={() => {
@@ -278,13 +278,16 @@ export default function Timeline({ cuts, totalDuration, onCutsChange, videoDurat
                     }}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
-                        (e.target as HTMLInputElement).blur();
+                        const newDuration = parseFloat(editingDurationValue);
+                        if (!isNaN(newDuration) && newDuration > 0) {
+                          const originalDuration = cuts[index].end - cuts[index].start;
+                          handleResize(index, newDuration - originalDuration, 'right');
+                        }
+                        setEditingDurationIndex(null);
                       }
                     }}
                     className="bg-transparent border-none outline-none text-white text-xs font-medium w-12"
                     autoFocus
-                    step="0.1"
-                    min="0.1"
                   />
                 ) : (
                   <div

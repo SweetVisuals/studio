@@ -62,8 +62,56 @@ export default function ClipList({
 }) {
   const [exportingClipId, setExportingClipId] = useState<number | null>(null);
   const [exportProgress, setExportProgress] = useState(0);
+  const [exportQueue, setExportQueue] = useState<number[]>([]);
+  const [isProcessingQueue, setIsProcessingQueue] = useState(false);
 
   const { toast } = useToast();
+
+  // Queue management functions
+  const addToQueue = (clipId: number) => {
+    if (exportQueue.includes(clipId) || exportingClipId === clipId) return;
+    setExportQueue(prev => [...prev, clipId]);
+    toast({ title: 'Added to export queue', description: 'Clip will be exported when queue processing starts.' });
+  };
+
+  const removeFromQueue = (clipId: number) => {
+    setExportQueue(prev => prev.filter(id => id !== clipId));
+  };
+
+  const clearQueue = () => {
+    setExportQueue([]);
+    setIsProcessingQueue(false);
+  };
+
+  const processQueue = async () => {
+    if (exportQueue.length === 0 || isProcessingQueue) return;
+
+    setIsProcessingQueue(true);
+
+    while (exportQueue.length > 0) {
+      const nextClipId = exportQueue[0];
+      const clip = clips.find(c => c.id === nextClipId);
+
+      if (!clip) {
+        // Clip no longer exists, remove from queue
+        setExportQueue(prev => prev.slice(1));
+        continue;
+      }
+
+      try {
+        await exportClip(clip, true);
+      } catch (error) {
+        console.error('Queue export failed:', error);
+        toast({ variant: 'destructive', title: 'Export failed', description: `Failed to export "${clip.title}". Continuing with next clip.` });
+      }
+
+      // Remove completed clip from queue
+      setExportQueue(prev => prev.slice(1));
+    }
+
+    setIsProcessingQueue(false);
+    toast({ title: 'Queue processing complete', description: 'All clips in the queue have been exported.' });
+  };
 
   // MediaRecorder codec and quality configurations
   const getMediaRecorderConfig = (format: 'mp4' | 'webm', quality: 'low' | 'medium' | 'high') => {
@@ -119,18 +167,118 @@ export default function ClipList({
         switch (filter) {
             case 'bw': return 'grayscale(100%)';
             case 'night-vision': return 'grayscale(100%) brightness(1.2) sepia(100%) hue-rotate(80deg) saturate(200%)';
-            case 'vhs': return ''; 
+            case 'vhs': return 'none'; // VHS effect handled separately with overlays
             default: return '';
         }
     }).filter(f => f).join(' ');
   };
 
+  const applyVhsEffectsToCanvas = (context: CanvasRenderingContext2D, canvas: HTMLCanvasElement, time: number) => {
+    // Save the current state
+    context.save();
+
+    // Apply basic VHS color adjustment
+    context.globalCompositeOperation = 'source-over';
+    context.filter = 'contrast(1.1) brightness(1.1) saturate(1.2)';
+
+    // Create a temporary canvas to apply the filter
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = canvas.width;
+    tempCanvas.height = canvas.height;
+    const tempCtx = tempCanvas.getContext('2d')!;
+    tempCtx.drawImage(canvas, 0, 0);
+
+    // Apply filter to temp canvas
+    tempCtx.filter = 'contrast(1.1) brightness(1.1) saturate(1.2)';
+    tempCtx.drawImage(tempCanvas, 0, 0);
+    tempCtx.filter = 'none';
+
+    // Clear and draw the filtered image back
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(tempCanvas, 0, 0);
+
+    // Reset filter
+    context.filter = 'none';
+
+    // Add scanlines effect
+    applyScanlinesToCanvas(context, canvas, time);
+
+    // Add color glitch effect
+    applyColorGlitchToCanvas(context, canvas, time);
+
+    // Restore the context state
+    context.restore();
+  };
+
+  const applyScanlinesToCanvas = (context: CanvasRenderingContext2D, canvas: HTMLCanvasElement, time: number) => {
+    // Create animated scanlines based on time
+    const scanlineHeight = 2;
+    const scanlineSpacing = 4;
+    const offset = (time * 50) % scanlineSpacing; // Animate based on time
+
+    context.globalCompositeOperation = 'multiply';
+    context.globalAlpha = 0.3;
+
+    for (let y = -offset; y < canvas.height; y += scanlineSpacing) {
+      context.fillStyle = '#000000';
+      context.fillRect(0, y, canvas.width, scanlineHeight);
+    }
+
+    // Reset
+    context.globalCompositeOperation = 'source-over';
+    context.globalAlpha = 1.0;
+  };
+
+  const applyColorGlitchToCanvas = (context: CanvasRenderingContext2D, canvas: HTMLCanvasElement, time: number) => {
+    // Create vintage VHS color degradation effect
+    context.globalCompositeOperation = 'overlay';
+    context.globalAlpha = 0.15;
+
+    // Create subtle color shifts for vintage look
+    const shiftX = Math.sin(time * 3) * 1;
+    const shiftY = Math.cos(time * 4) * 0.5;
+
+    // Vintage color overlay - more muted and tape-like
+    const gradient = context.createLinearGradient(0, 0, canvas.width, canvas.height);
+    gradient.addColorStop(0, '#8B4513');    // Saddle brown (tape degradation)
+    gradient.addColorStop(0.3, '#DAA520');  // Goldenrod (warm vintage tone)
+    gradient.addColorStop(0.7, '#696969');  // Dim gray (tape wear)
+    gradient.addColorStop(1, '#8B4513');    // Saddle brown
+
+    context.save();
+    context.translate(shiftX, shiftY);
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.restore();
+
+    // Add subtle vignette effect for vintage look
+    context.globalCompositeOperation = 'multiply';
+    context.globalAlpha = 0.1;
+
+    const vignetteGradient = context.createRadialGradient(
+      canvas.width / 2, canvas.height / 2, 0,
+      canvas.width / 2, canvas.height / 2, Math.max(canvas.width, canvas.height) / 2
+    );
+    vignetteGradient.addColorStop(0, 'transparent');
+    vignetteGradient.addColorStop(0.7, 'transparent');
+    vignetteGradient.addColorStop(1, '#2F1B14'); // Dark brown vignette
+
+    context.fillStyle = vignetteGradient;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Reset
+    context.globalCompositeOperation = 'source-over';
+    context.globalAlpha = 1.0;
+  };
+
   const exportFrameRateAdjusted = exportFrameRate > 30 ? 30 : exportFrameRate;
 
-  const exportClip = async (clip: Clip) => {
+  const exportClip = async (clip: Clip, fromQueue = false) => {
     setExportingClipId(clip.id);
     setExportProgress(0);
-    toast({ title: `Exporting "${clip.title}"...`, description: 'Please wait, this can take a moment.' });
+    if (!fromQueue) {
+      toast({ title: `Exporting "${clip.title}"...`, description: 'Please wait, this can take a moment.' });
+    }
 
     try {
       // Check for WebCodecs support and try using it for better performance
@@ -579,7 +727,7 @@ export default function ClipList({
                       const saturate = 100 + (100 * opacityFactor); // 100% to 200%
                       return `grayscale(${grayscale}%) brightness(${brightness}) sepia(${sepia}%) hue-rotate(${h}deg) saturate(${saturate}%)`;
                     }
-                  case 'vhs': return 'contrast(1.1) brightness(1.1) saturate(1.2)';
+                  case 'vhs': return 'none'; // VHS effect handled separately with overlays
                   case 'grain': return 'none'; // Grain not supported in canvas filter
                   case 'noise': return 'none'; // Noise not supported in canvas filter
                   default: return 'none';
@@ -601,6 +749,11 @@ export default function ClipList({
 
           // Reset filter for next frame
           context.filter = 'none';
+
+          // Apply VHS effects if VHS filter is active
+          if (clip.filters && clip.filters.includes('vhs')) {
+            applyVhsEffectsToCanvas(context, canvas, time);
+          }
 
           if (videoElement.currentTime < cut.end) {
             videoElement.requestVideoFrameCallback(drawFrame);
@@ -660,6 +813,63 @@ export default function ClipList({
           </Button>
         )}
       </div>
+
+      {/* Export Queue Status */}
+      {(exportQueue.length > 0 || isProcessingQueue) && (
+        <Card className="mb-4 p-4 bg-secondary/20 border-primary/20">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-lg font-semibold flex items-center gap-2">
+              <Download className="h-5 w-5 text-primary" />
+              Export Queue {isProcessingQueue && <span className="text-sm text-muted-foreground">(Processing)</span>}
+            </h3>
+            <div className="flex gap-2">
+              {!isProcessingQueue && exportQueue.length > 0 && (
+                <Button size="sm" onClick={processQueue}>
+                  Start Export
+                </Button>
+              )}
+              <Button variant="outline" size="sm" onClick={clearQueue}>
+                Clear Queue
+              </Button>
+            </div>
+          </div>
+          {exportQueue.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-sm text-muted-foreground">
+                {exportQueue.length} clip{exportQueue.length !== 1 ? 's' : ''} in queue:
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {exportQueue.map(id => {
+                  const clip = clips.find(c => c.id === id);
+                  return clip ? (
+                    <div key={id} className="flex items-center gap-1 bg-secondary/50 rounded px-2 py-1 text-xs">
+                      <span>{clip.title}</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-4 w-4 p-0 hover:bg-destructive/20"
+                        onClick={() => removeFromQueue(id)}
+                        disabled={isProcessingQueue}
+                      >
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ) : null;
+                })}
+              </div>
+            </div>
+          )}
+          {isProcessingQueue && exportingClipId && (
+            <div className="mt-2">
+              <div className="flex justify-between text-sm mb-1">
+                <span>Exporting: {clips.find(c => c.id === exportingClipId)?.title}</span>
+                <span>{Math.round(exportProgress)}%</span>
+              </div>
+              <Progress value={exportProgress} className="w-full" />
+            </div>
+          )}
+        </Card>
+      )}
       <div className="grid grid-cols-1 gap-3">
         {clips.map((clip) => (
           <Card key={clip.id} className="transition-all duration-300 cursor-pointer hover:bg-secondary/20" onClick={() => onSelect?.(clip)}>
@@ -701,8 +911,24 @@ export default function ClipList({
                     <Button variant="outline" size="sm" className="h-7 px-2" onClick={() => onPreview(clip)}>
                       {isPreviewing && activePreviewClipId === clip.id ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
                     </Button>
-                    <Button variant="default" size="sm" className="h-7 px-2" onClick={() => exportClip(clip)}>
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className="h-7 px-2"
+                      onClick={() => exportClip(clip)}
+                      disabled={exportingClipId === clip.id || isProcessingQueue}
+                    >
                       <Download className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 px-2"
+                      onClick={() => addToQueue(clip.id)}
+                      disabled={exportQueue.includes(clip.id) || exportingClipId === clip.id}
+                      title="Add to export queue"
+                    >
+                      <Copy className="h-3 w-3" />
                     </Button>
                     <Button
                       variant="ghost"
