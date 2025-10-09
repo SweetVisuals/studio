@@ -30,7 +30,6 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  serverActions: false,
 };
 
 export default nextConfig;

@@ -703,79 +703,71 @@ const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/
             return;
           }
 
+  let filterString = 'none';
+  if (clip.filters && clip.filters.length > 0 && !clip.filters.includes('none')) {
+    if (isMobile) {
+      filterString = clip.filters.map(filter => {
+        switch (filter) {
+          case 'bw': return 'grayscale(100%)';
+          case 'night-vision': return 'grayscale(100%) brightness(1.2) sepia(100%) hue-rotate(80deg) saturate(200%)';
+          case 'vhs': return 'contrast(1.1) brightness(1.1)';
+          default: return 'none';
+        }
+      }).filter(f => f !== 'none').join(' ');
+    } else {
+      filterString = clip.filters.map(filter => {
+        switch (filter) {
+          case 'bw': return 'grayscale(100%)';
+          case 'night-vision':
+            const opacityFactor = nightVisionOpacity / 100;
+            if (nightVisionColor === '#default') {
+              const grayscale = 100 * opacityFactor;
+              const brightness = 1.0 + (0.2 * opacityFactor);
+              const sepia = 100 * opacityFactor;
+              const saturate = 100 + (100 * opacityFactor);
+              return `grayscale(${grayscale}%) brightness(${brightness}) sepia(${sepia}%) hue-rotate(80deg) saturate(${saturate}%)`;
+            } else {
+              const hexToHsl = (hex: string) => {
+                const r = parseInt(hex.slice(1, 3), 16) / 255;
+                const g = parseInt(hex.slice(3, 5), 16) / 255;
+                const b = parseInt(hex.slice(5, 7), 16) / 255;
+                const max = Math.max(r, g, b);
+                const min = Math.min(r, g, b);
+                let h = 0;
+                let s = 0;
+                const l = (max + min) / 2;
+                if (max !== min) {
+                  const d = max - min;
+                  s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+                  switch (max) {
+                    case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+                    case g: h = (b - r) / d + 2; break;
+                    case b: h = (r - g) / d + 4; break;
+                  }
+                  h /= 6;
+                }
+                return [h * 360, s * 100, l * 100];
+              };
+              const [h] = hexToHsl(nightVisionColor);
+              const grayscale = 100 * opacityFactor;
+              const brightness = 1.0 + (0.2 * opacityFactor);
+              const sepia = 100 * opacityFactor;
+              const saturate = 100 + (100 * opacityFactor);
+              return `grayscale(${grayscale}%) brightness(${brightness}) sepia(${sepia}%) hue-rotate(${h}deg) saturate(${saturate}%)`;
+            }
+          case 'vhs': return 'contrast(1.1) brightness(1.1) saturate(1.2)';
+          case 'grain': return 'none';
+          case 'noise': return 'none';
+          default: return 'none';
+        }
+      }).filter(f => f !== 'none').join(' ');
+    }
+  }
+
           try {
             context.clearRect(0, 0, canvas.width, canvas.height);
 
-            // Apply filters to the canvas context (simplified for mobile)
-            if (isMobile) {
-              // On mobile, use simpler filters to avoid performance issues
-              context.filter = clip.filters && clip.filters.length > 0 && !clip.filters.includes('none')
-                ? clip.filters.map(filter => {
-                    switch (filter) {
-                      case 'bw': return 'grayscale(100%)';
-                      case 'night-vision': return 'grayscale(100%) brightness(1.2) sepia(100%) hue-rotate(80deg) saturate(200%)';
-                      case 'vhs': return 'contrast(1.1) brightness(1.1)';
-                      default: return 'none';
-                    }
-                  }).filter(f => f !== 'none').join(' ')
-                : 'none';
-            } else {
-              // Full filter support for desktop
-              context.filter = clip.filters && clip.filters.length > 0 && !clip.filters.includes('none')
-                ? clip.filters.map(filter => {
-                    switch (filter) {
-                      case 'bw': return 'grayscale(100%)';
-                      case 'night-vision':
-                        const opacityFactor = nightVisionOpacity / 100;
-                        if (nightVisionColor === '#default') {
-                          // Interpolate filter values based on opacity
-                          const grayscale = 100 * opacityFactor; // 0% to 100%
-                          const brightness = 1.0 + (0.2 * opacityFactor); // 1.0 to 1.2
-                          const sepia = 100 * opacityFactor; // 0% to 100%
-                          const saturate = 100 + (100 * opacityFactor); // 100% to 200%
-                          return `grayscale(${grayscale}%) brightness(${brightness}) sepia(${sepia}%) hue-rotate(80deg) saturate(${saturate}%)`;
-                        } else {
-                          // Convert hex color to HSL for hue-rotate
-                          const hexToHsl = (hex: string) => {
-                            const r = parseInt(hex.slice(1, 3), 16) / 255;
-                            const g = parseInt(hex.slice(3, 5), 16) / 255;
-                            const b = parseInt(hex.slice(5, 7), 16) / 255;
-
-                            const max = Math.max(r, g, b);
-                            const min = Math.min(r, g, b);
-                            let h = 0;
-                            let s = 0;
-                            const l = (max + min) / 2;
-
-                            if (max !== min) {
-                              const d = max - min;
-                              s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-                              switch (max) {
-                                case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-                                case g: h = (b - r) / d + 2; break;
-                                case b: h = (r - g) / d + 4; break;
-                              }
-                              h /= 6;
-                            }
-
-                            return [h * 360, s * 100, l * 100];
-                          };
-
-                          const [h] = hexToHsl(nightVisionColor);
-                          // Interpolate filter values based on opacity
-                          const grayscale = 100 * opacityFactor; // 0% to 100%
-                          const brightness = 1.0 + (0.2 * opacityFactor); // 1.0 to 1.2
-                          const sepia = 100 * opacityFactor; // 0% to 100%
-                          const saturate = 100 + (100 * opacityFactor); // 100% to 200%
-                          return `grayscale(${grayscale}%) brightness(${brightness}) sepia(${sepia}%) hue-rotate(${h}deg) saturate(${saturate}%)`;
-                        }
-                      case 'vhs': return 'contrast(1.1) brightness(1.1) saturate(1.2)';
-                      case 'grain': return 'none'; // Grain not supported in canvas filter
-                      case 'noise': return 'none'; // Noise not supported in canvas filter
-                      default: return 'none';
-                    }
-              }).filter(f => f !== 'none').join(' ')
-            : 'none';
+            context.filter = filterString;
 
             const scale = Math.min(canvas.width / videoElement.videoWidth, canvas.height / videoElement.videoHeight);
             const scaledWidth = videoElement.videoWidth * scale;
@@ -792,7 +784,6 @@ const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/
             if (clip.filters && clip.filters.includes('vhs')) {
               applyVhsEffectsToCanvas(context, canvas, time);
             }
-
           } catch (e) {
             console.warn('Frame drawing error:', e);
             // On mobile, continue processing even if a frame fails
