@@ -774,11 +774,6 @@ const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/
                       case 'noise': return 'none'; // Noise not supported in canvas filter
                       default: return 'none';
                     }
-case 'vhs': return 'none'; // VHS effect handled separately with overlays
-                  case 'grain': return 'none'; // Grain not supported in canvas filter
-                  case 'noise': return 'none'; // Noise not supported in canvas filter
-                  default: return 'none';
-                }
               }).filter(f => f !== 'none').join(' ')
             : 'none';
 
@@ -793,6 +788,11 @@ case 'vhs': return 'none'; // VHS effect handled separately with overlays
             // Reset filter for next frame
             context.filter = 'none';
 
+            // Apply VHS effects if VHS filter is active
+            if (clip.filters && clip.filters.includes('vhs')) {
+              applyVhsEffectsToCanvas(context, canvas, time);
+            }
+
           } catch (e) {
             console.warn('Frame drawing error:', e);
             // On mobile, continue processing even if a frame fails
@@ -803,13 +803,6 @@ case 'vhs': return 'none'; // VHS effect handled separately with overlays
             }
           }
 
-// Reset filter for next frame
-          context.filter = 'none';
-
-          // Apply VHS effects if VHS filter is active
-          if (clip.filters && clip.filters.includes('vhs')) {
-            applyVhsEffectsToCanvas(context, canvas, time);
-          }
           if (videoElement.currentTime < cut.end) {
             videoElement.requestVideoFrameCallback(drawFrame);
           } else {
