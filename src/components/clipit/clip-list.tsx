@@ -551,12 +551,20 @@ const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/
     // Finalize and download
     const blob = await exporter.finalize();
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${clip.title.replace(/[^a-zA-Z0-9]/g, '_')}.mp4`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+
+    if (isMobile) {
+      // On mobile, use window.open to trigger download dialog instead of opening preview
+      window.open(url, '_blank');
+    } else {
+      // Desktop: use standard download link
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${clip.title.replace(/[^a-zA-Z0-9]/g, '_')}.mp4`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+
     URL.revokeObjectURL(url);
 
     setExportingClipId(null);
@@ -637,13 +645,21 @@ const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/
     recorder.onstop = () => {
       const blob = new Blob(chunks, { type: exportFormat === 'mp4' ? 'video/mp4' : 'video/webm' });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      const extension = exportFormat === 'mp4' ? 'mp4' : 'webm';
-      a.download = `${clip.title.replace(/[^a-zA-Z0-9]/g, '_')}.${extension}`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+
+      if (isMobile) {
+        // On mobile, use window.open to trigger download dialog instead of opening preview
+        window.open(url, '_blank');
+      } else {
+        // Desktop: use standard download link
+        const a = document.createElement('a');
+        a.href = url;
+        const extension = exportFormat === 'mp4' ? 'mp4' : 'webm';
+        a.download = `${clip.title.replace(/[^a-zA-Z0-9]/g, '_')}.${extension}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+
       URL.revokeObjectURL(url);
       setExportingClipId(null);
       toast({ title: 'Export complete!', description: 'Your video has been downloaded.' });
