@@ -669,7 +669,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
     const tempClip: Clip = {
         id: -1,
         start: start,
-        end: start + cutDuration,
+        end: end,
         title: 'Preview',
         filters: filters,
         isMuted: isMuted,
@@ -932,7 +932,7 @@ export default function VideoEditor({ videoSources, onVideoUpload, onRemoveSourc
       console.log(`Active video duration: ${videoDuration}s`);
       console.log(`Cut duration: ${cutDuration}s`);
 
-      const clipDuration = sourceCutDurations[activeVideoIndex] || cutDuration;
+      const clipDuration = Math.max(end - start, cutDuration); // Use selection duration, fallback to cutDuration if invalid
       const numClips = Math.min(Math.floor(videoDuration / clipDuration), 25);
 
       if (numClips === 0) {
